@@ -107,12 +107,12 @@ export async function participantRoutes(app: FastifyInstance) {
       .maybeSingle();
     if (identityError) throw identityError;
     if (!identity) return reply.code(404).send({ error: "Participant not found" });
-    const { error } = await supabase.from("event_registrations").upsert(
-      { event_id: eventId, profile_id: identity.profile_id, status: "registered", source: "participant_bot" },
-      { onConflict: "event_id,profile_id" },
-    );
-    if (error) throw error;
-    return reply.code(201).send({ ok: true });
+    const registration = await supabase.rpc("register_for_event", { p_profile_id: identity.profile_id, p_event_id: eventId, p_source: "participant_bot" });
+    if (registration.error) {
+      if (registration.error.message.includes("ITMO_ID_REQUIRED")) return reply.code(428).send({ error: "Для регистрации привяжите ITMO.ID", code: "ITMO_ID_REQUIRED" });
+      return reply.code(409).send({ error: "Регистрация закрыта", details: registration.error.message });
+    }
+    return reply.code(201).send(registration.data);
   });
 
   app.delete("/events/:eventId/registrations/:telegramId", { preHandler: requireService("participant_bot") }, async (request, reply) => {

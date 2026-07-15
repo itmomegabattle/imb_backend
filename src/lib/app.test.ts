@@ -20,3 +20,17 @@ test("participant bot endpoints reject missing service token", async () => {
   assert.equal(response.statusCode, 401);
   await app.close();
 });
+
+test("organizer API rejects anonymous users before touching the database", async () => {
+  const app = await buildApp();
+  const response = await app.inject({ method: "GET", url: "/api/v1/organizer/dashboard" });
+  assert.equal(response.statusCode, 401);
+  await app.close();
+});
+
+test("unknown content resource returns 404", async () => {
+  const app = await buildApp();
+  const response = await app.inject({ method: "GET", url: "/api/v1/content/unknown" });
+  assert.equal(response.statusCode, 404);
+  await app.close();
+});
