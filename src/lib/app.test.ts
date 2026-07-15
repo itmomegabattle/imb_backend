@@ -21,10 +21,10 @@ test("participant bot endpoints reject missing service token", async () => {
   await app.close();
 });
 
-test("organizer API rejects anonymous users before touching the database", async () => {
+test("organizer API is not part of the ecosystem", async () => {
   const app = await buildApp();
   const response = await app.inject({ method: "GET", url: "/api/v1/organizer/dashboard" });
-  assert.equal(response.statusCode, 401);
+  assert.equal(response.statusCode, 404);
   await app.close();
 });
 

@@ -19,7 +19,7 @@ create table if not exists public.account_identities (
 
 create table if not exists public.profile_roles (
   profile_id uuid not null references public.profiles(id) on delete cascade,
-  role text not null check (role in ('participant', 'organizer', 'admin', 'site_admin')),
+  role text not null check (role in ('participant', 'admin', 'site_admin')),
   granted_by uuid references public.profiles(id) on delete set null,
   created_at timestamptz not null default now(),
   primary key (profile_id, role)
@@ -129,36 +129,6 @@ create table if not exists public.event_registrations (
   unique (event_id, profile_id)
 );
 
-create table if not exists public.organizer_tasks (
-  id uuid primary key default gen_random_uuid(),
-  yougile_task_id text unique,
-  title text not null,
-  description text,
-  status text not null default 'not_started' check (status in ('not_started', 'in_progress', 'done', 'cancelled')),
-  priority text check (priority in ('low', 'normal', 'high', 'urgent')),
-  deadline_at timestamptz,
-  yougile_column_id text,
-  created_by uuid references public.profiles(id) on delete set null,
-  raw_yougile jsonb not null default '{}'::jsonb,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
-);
-create table if not exists public.organizer_task_assignees (
-  task_id uuid not null references public.organizer_tasks(id) on delete cascade,
-  profile_id uuid not null references public.profiles(id) on delete cascade,
-  created_at timestamptz not null default now(),
-  primary key (task_id, profile_id)
-);
-create table if not exists public.integration_audit_log (
-  id bigint generated always as identity primary key,
-  integration text not null,
-  action text not null,
-  actor_profile_id uuid references public.profiles(id) on delete set null,
-  external_id text,
-  payload jsonb not null default '{}'::jsonb,
-  created_at timestamptz not null default now()
-);
-
 create or replace function public.upsert_telegram_identity(
   p_telegram_user_id bigint, p_username text, p_first_name text, p_last_name text, p_photo_url text
 )
@@ -206,7 +176,7 @@ returns jsonb language sql security definer set search_path = public as $$
     'user', jsonb_build_object('id', t.id, 'tgId', p_telegram_user_id,
       'name', coalesce(nullif(t.full_name, ''), t.nickname), 'username', t.telegram_username,
       'avatarUrl', t.avatar_url,
-      'isManager', exists (select 1 from public.profile_roles r where r.profile_id = t.id and r.role in ('organizer', 'admin', 'site_admin'))),
+      'isManager', exists (select 1 from public.profile_roles r where r.profile_id = t.id and r.role in ('admin', 'site_admin'))),
     'stats', jsonb_build_object(
       'streak', (select count(*) from public.event_registrations er where er.profile_id = t.id and er.status = 'attended'),
       'registrations', (select count(*) from public.event_registrations er where er.profile_id = t.id and er.status <> 'cancelled'),
@@ -252,7 +222,4 @@ alter table public.currency_transactions enable row level security;
 alter table public.achievements enable row level security;
 alter table public.profile_achievements enable row level security;
 alter table public.event_registrations enable row level security;
-alter table public.organizer_tasks enable row level security;
-alter table public.organizer_task_assignees enable row level security;
-alter table public.integration_audit_log enable row level security;
 -- Mutations go through the backend service role; public clients receive no direct policies here.

@@ -18,7 +18,6 @@
 openssl rand -hex 32 # SESSION_SECRET
 openssl rand -hex 32 # CRON_SECRET
 openssl rand -hex 32 # PARTICIPANT_BOT_SERVICE_TOKEN
-openssl rand -hex 32 # ORG_BOT_SERVICE_TOKEN
 openssl rand -hex 32 # VAULT_ENCRYPTION_KEY
 printf '1234' | shasum -a 256 # VAULT_PIN_HASH, вместо 1234 выбрать свой PIN
 ```
@@ -47,19 +46,17 @@ Vercel подходит для API и пилота. Постоянный worker 
 
 ## 5. Telegram
 
-В backend указываются токены обоих ботов. В каждом bot repository указывается свой `SERVICE_TOKEN` и URL backend. Service tokens должны различаться.
+В backend указываются токен бота участников и его отдельный `PARTICIPANT_BOT_SERVICE_TOKEN`.
 
-Mini App получает Telegram `initData` и отправляет его на `/auth/telegram/session`. Сервер бота при необходимости получает короткий пользовательский backend JWT через `/auth/service/participant-session` или `/auth/service/organizer-session`.
+Mini App получает Telegram `initData` и отправляет его на `/auth/telegram/session`. Сервер бота при необходимости получает короткий пользовательский backend JWT через `/auth/service/participant-session`.
 
-## 6. YouGile
+Бот организаторов разворачивается отдельно и не получает URL, service token или доступ к Supabase этого backend.
 
-Создайте один технический аккаунт, API key, project ID и default column ID. Webhook направьте на `/api/v1/integrations/yougile/webhook` и добавьте тот же `YOUGILE_WEBHOOK_SECRET`.
-
-## 7. ITMO.ID и ITMO Events
+## 6. ITMO.ID и ITMO Events
 
 Пока credentials отсутствуют, endpoints ITMO.ID возвращают `501`, остальная система работает через Telegram. После выдачи доступа заполните `ITMO_ID_*`. Для ITMO Events заполните `ITMO_EVENTS_*` согласно выданному API.
 
-## 8. Smoke-check
+## 7. Smoke-check
 
 ```bash
 npm test

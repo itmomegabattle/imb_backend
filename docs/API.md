@@ -12,7 +12,6 @@
 | GET | `/auth/itmo/callback` | callback провайдера |
 | POST | `/auth/itmo/exchange` | одноразовый code → backend session |
 | POST | `/auth/service/participant-session` | участнический бот действует от имени Telegram user |
-| POST | `/auth/service/organizer-session` | бот оргов действует от имени организатора |
 | GET | `/auth/me` | текущая сессия |
 | POST | `/auth/logout` | удалить cookie |
 
@@ -59,23 +58,8 @@ JWT передаётся `Authorization: Bearer TOKEN`. В браузере та
 - `POST /events/:eventId/register` — зарегистрироваться;
 - `POST /admin/events/:eventId/attendance` — отметить посещение.
 
-## Организаторы
-
-- `GET /organizer/dashboard`;
-- `GET/PATCH /organizer/members` — список и ранги;
-- `GET/PUT/DELETE /organizer/availability` — недельная занятость;
-- `GET /organizer/availability/suggestions` — лучшее время собрания;
-- `GET/POST/PATCH /organizer/meetings`;
-- `POST /organizer/meetings/:id/respond`;
-- `GET/POST/PATCH/DELETE /organizer/tasks`;
-- `POST /organizer/tasks/:id/comments`.
-
 ## Интеграции
 
-- `/integrations/yougile/tasks*` — прямые серверные операции;
-- `POST /integrations/yougile/sync` — импорт;
-- `PUT /integrations/yougile/user-mappings/:externalUserId` — сопоставление исполнителя;
-- `POST /integrations/yougile/webhook` — входящие изменения;
 - `POST /integrations/itmo-events/events/:eventId/publish`;
 - `POST /integrations/itmo-events/events/:eventId/sync`;
 - `POST /webhooks/itmo-events`.
@@ -100,3 +84,5 @@ JWT передаётся `Authorization: Bearer TOKEN`. В браузере та
 - `428 ITMO_ID_REQUIRED` — требуется привязать ITMO.ID;
 - `501` — интеграция ещё не настроена;
 - `503` — отсутствует обязательный внешний сервис.
+
+API бота организаторов здесь отсутствует намеренно.

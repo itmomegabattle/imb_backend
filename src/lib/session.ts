@@ -3,7 +3,7 @@ import type { FastifyReply, FastifyRequest } from "fastify";
 import { env } from "../config/env.js";
 import { db, rolesFor, unwrap } from "./db.js";
 
-export type EcosystemRole = "participant" | "organizer" | "admin" | "site_admin";
+export type EcosystemRole = "participant" | "admin" | "site_admin";
 
 export interface SessionPrincipal {
   profileId: string;
@@ -83,4 +83,4 @@ export function requireRole(...roles: EcosystemRole[]) {
   };
 }
 
-export const adminRoles: EcosystemRole[] = ["organizer", "admin", "site_admin"];
+export const adminRoles: EcosystemRole[] = ["admin", "site_admin"];

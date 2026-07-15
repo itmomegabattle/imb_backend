@@ -12,7 +12,7 @@ export function unwrap<T>(result: { data: T; error: { message: string; code?: st
 
 export async function rolesFor(profileId: string) {
   const rows = unwrap(await db().from("profile_roles").select("role").eq("profile_id", profileId));
-  return (rows ?? []).map((row) => row.role) as Array<"participant" | "organizer" | "admin" | "site_admin">;
+  return (rows ?? []).map((row) => row.role) as Array<"participant" | "admin" | "site_admin">;
 }
 
 export async function profileForIdentity(provider: string, subject: string) {

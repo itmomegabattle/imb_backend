@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import { isItmoIdConfigured, isSupabaseServerConfigured, isYouGileConfigured } from "../../config/env.js";
+import { isItmoIdConfigured, isSupabaseServerConfigured } from "../../config/env.js";
 import { db } from "../../lib/db.js";
 
 export async function healthRoutes(app: FastifyInstance) {
@@ -9,7 +9,6 @@ export async function healthRoutes(app: FastifyInstance) {
     checks: {
       supabase: isSupabaseServerConfigured ? "configured" : "missing-env",
       itmoId: isItmoIdConfigured ? "configured" : "missing-env",
-      youGile: isYouGileConfigured ? "configured" : "missing-env",
     },
     now: new Date().toISOString(),
   }));
@@ -21,7 +20,7 @@ export async function healthRoutes(app: FastifyInstance) {
 
   app.get("/ready", async (_request, reply) => {
     if (!isSupabaseServerConfigured) return reply.code(503).send({ ready: false, error: "Supabase не настроен" });
-    const required = ["profiles", "account_identities", "organizer_meetings", "notification_queue", "audit_logs", "backend_schema_versions"];
+    const required = ["profiles", "account_identities", "notification_queue", "audit_logs", "backend_schema_versions"];
     const checks = await Promise.all(required.map(async (table) => {
       const result = await db().from(table).select("*", { head: true, count: "exact" }).limit(1);
       return { table, ok: !result.error, error: result.error?.message };

@@ -1,6 +1,22 @@
--- Full backend schema for website, participant bot and organizer bot.
+-- Full backend schema for the website and participant bot.
 -- Run after 202607150001_ecosystem_core.sql.
 create extension if not exists "pgcrypto";
+
+-- The organizer bot is intentionally autonomous and has no access to this database.
+update public.profile_roles set role = 'admin' where role = 'organizer';
+alter table public.profile_roles drop constraint if exists profile_roles_role_check;
+alter table public.profile_roles add constraint profile_roles_role_check
+  check (role in ('participant', 'admin', 'site_admin'));
+drop table if exists public.organizer_task_reminders cascade;
+drop table if exists public.organizer_task_comments cascade;
+drop table if exists public.organizer_task_assignees cascade;
+drop table if exists public.organizer_tasks cascade;
+drop table if exists public.organizer_meeting_attendees cascade;
+drop table if exists public.organizer_meetings cascade;
+drop table if exists public.organizer_availability cascade;
+drop table if exists public.organizer_memberships cascade;
+drop table if exists public.integration_user_mappings cascade;
+drop table if exists public.integration_audit_log cascade;
 
 alter table public.profiles
   add column if not exists birth_date date,
@@ -42,95 +58,23 @@ create table if not exists public.auth_exchange_codes (
   created_at timestamptz not null default now()
 );
 
-create table if not exists public.organizer_memberships (
-  profile_id uuid primary key references public.profiles(id) on delete cascade,
-  rank text not null default 'mega_org' check (rank in ('head_org','mega_org','mega_responsible')),
-  block_key text,
-  position_title text,
-  is_active boolean not null default true,
-  granted_by uuid references public.profiles(id) on delete set null,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
-);
-
-create table if not exists public.organizer_availability (
-  id uuid primary key default gen_random_uuid(),
-  profile_id uuid not null references public.profiles(id) on delete cascade,
-  starts_at timestamptz not null,
-  ends_at timestamptz not null,
-  status text not null default 'free' check (status in ('free','busy','preferred')),
-  note text,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now(),
-  check (ends_at > starts_at),
-  unique(profile_id, starts_at, ends_at)
-);
-create index if not exists organizer_availability_range_idx on public.organizer_availability(starts_at, ends_at);
-
-create table if not exists public.organizer_meetings (
-  id uuid primary key default gen_random_uuid(),
-  title text not null,
-  block_key text,
-  topic text,
-  key_questions jsonb not null default '[]'::jsonb,
-  location text,
-  conference_url text,
-  starts_at timestamptz not null,
-  ends_at timestamptz not null,
-  status text not null default 'scheduled' check (status in ('draft','scheduled','completed','cancelled')),
-  created_by uuid references public.profiles(id) on delete set null,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now(),
-  check (ends_at > starts_at)
-);
-create table if not exists public.organizer_meeting_attendees (
-  meeting_id uuid not null references public.organizer_meetings(id) on delete cascade,
-  profile_id uuid not null references public.profiles(id) on delete cascade,
-  response text not null default 'pending' check (response in ('pending','accepted','declined','maybe','attended','missed')),
-  responded_at timestamptz,
-  primary key(meeting_id, profile_id)
-);
-
-alter table public.organizer_tasks
-  add column if not exists parent_task_id uuid references public.organizer_tasks(id) on delete cascade,
-  add column if not exists source text not null default 'megabattle' check (source in ('megabattle','yougile')),
-  add column if not exists revision integer not null default 1,
-  add column if not exists sync_status text not null default 'pending' check (sync_status in ('pending','synced','conflict','error')),
-  add column if not exists last_synced_at timestamptz;
-
-create table if not exists public.organizer_task_comments (
-  id uuid primary key default gen_random_uuid(),
-  task_id uuid not null references public.organizer_tasks(id) on delete cascade,
-  author_profile_id uuid references public.profiles(id) on delete set null,
-  body text not null,
-  yougile_message_id text,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
-);
-create table if not exists public.organizer_task_reminders (
-  id uuid primary key default gen_random_uuid(),
-  task_id uuid not null references public.organizer_tasks(id) on delete cascade,
-  offset_minutes integer not null check (offset_minutes > 0),
-  created_by uuid references public.profiles(id) on delete set null,
-  unique(task_id, offset_minutes)
-);
-
 create table if not exists public.notification_preferences (
   profile_id uuid primary key references public.profiles(id) on delete cascade,
   telegram_enabled boolean not null default true,
   events_enabled boolean not null default true,
-  meetings_enabled boolean not null default true,
-  tasks_enabled boolean not null default true,
-  birthdays_enabled boolean not null default true,
   quiet_hours_start time,
   quiet_hours_end time,
   timezone text not null default 'Europe/Moscow',
   updated_at timestamptz not null default now()
 );
+alter table public.notification_preferences
+  drop column if exists meetings_enabled,
+  drop column if exists tasks_enabled,
+  drop column if exists birthdays_enabled;
 create table if not exists public.notification_queue (
   id uuid primary key default gen_random_uuid(),
   profile_id uuid references public.profiles(id) on delete cascade,
-  bot text not null check (bot in ('participant','organizer')),
+  bot text not null default 'participant' check (bot = 'participant'),
   type text not null,
   payload jsonb not null default '{}'::jsonb,
   scheduled_at timestamptz not null default now(),
@@ -141,6 +85,9 @@ create table if not exists public.notification_queue (
   sent_at timestamptz,
   created_at timestamptz not null default now()
 );
+delete from public.notification_queue where bot <> 'participant';
+alter table public.notification_queue drop constraint if exists notification_queue_bot_check;
+alter table public.notification_queue add constraint notification_queue_bot_check check (bot = 'participant');
 create index if not exists notification_queue_pending_idx on public.notification_queue(status, scheduled_at);
 
 create table if not exists public.reward_codes (
@@ -219,7 +166,7 @@ create index if not exists audit_logs_created_idx on public.audit_logs(created_a
 
 create table if not exists public.integration_jobs (
   id uuid primary key default gen_random_uuid(),
-  integration text not null check (integration in ('yougile','itmo_events','telegram')),
+  integration text not null check (integration = 'itmo_events'),
   operation text not null,
   entity_type text,
   entity_id text,
@@ -231,17 +178,10 @@ create table if not exists public.integration_jobs (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+delete from public.integration_jobs where integration <> 'itmo_events';
+alter table public.integration_jobs drop constraint if exists integration_jobs_integration_check;
+alter table public.integration_jobs add constraint integration_jobs_integration_check check (integration = 'itmo_events');
 create index if not exists integration_jobs_pending_idx on public.integration_jobs(status, run_after);
-
-create table if not exists public.integration_user_mappings (
-  id uuid primary key default gen_random_uuid(),
-  integration text not null,
-  external_user_id text not null,
-  profile_id uuid not null references public.profiles(id) on delete cascade,
-  created_at timestamptz not null default now(),
-  unique(integration, external_user_id),
-  unique(integration, profile_id)
-);
 
 insert into storage.buckets (id, name, public) values
   ('content-media','content-media',true),
@@ -250,12 +190,6 @@ on conflict (id) do nothing;
 
 -- All privileged writes happen through the service-role backend.
 alter table public.auth_exchange_codes enable row level security;
-alter table public.organizer_memberships enable row level security;
-alter table public.organizer_availability enable row level security;
-alter table public.organizer_meetings enable row level security;
-alter table public.organizer_meeting_attendees enable row level security;
-alter table public.organizer_task_comments enable row level security;
-alter table public.organizer_task_reminders enable row level security;
 alter table public.notification_preferences enable row level security;
 alter table public.notification_queue enable row level security;
 alter table public.reward_codes enable row level security;
@@ -265,7 +199,6 @@ alter table public.temporary_media enable row level security;
 alter table public.vault_entries enable row level security;
 alter table public.audit_logs enable row level security;
 alter table public.integration_jobs enable row level security;
-alter table public.integration_user_mappings enable row level security;
 
 -- Keep the operational log bounded. Called after every audit insert by the backend.
 create or replace function public.trim_audit_logs(p_keep integer default 50)

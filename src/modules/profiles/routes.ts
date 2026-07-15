@@ -64,10 +64,9 @@ export async function profileRoutes(app: FastifyInstance) {
 
   app.put("/api/v1/admin/profiles/:id/roles/:role", { preHandler: requireRole("admin", "site_admin") }, async (request, reply) => {
     const { id, role } = request.params as { id: string; role: string };
-    const parsed = z.enum(["participant", "organizer", "admin", "site_admin"]).safeParse(role);
+    const parsed = z.enum(["participant", "admin", "site_admin"]).safeParse(role);
     if (!parsed.success) return reply.code(400).send({ error: "Неизвестная роль" });
     unwrap(await db().from("profile_roles").upsert({ profile_id: id, role: parsed.data, granted_by: request.principal!.profileId }, { onConflict: "profile_id,role" }));
-    if (parsed.data === "organizer") unwrap(await db().from("organizer_memberships").upsert({ profile_id: id, granted_by: request.principal!.profileId }, { onConflict: "profile_id" }));
     await audit(request.principal!.profileId, "role.granted", "profile", id, { role: parsed.data });
     return reply.code(201).send({ ok: true });
   });

@@ -16,15 +16,8 @@ const envSchema = z.object({
   SUPABASE_URL: z.string().url().optional(),
   SUPABASE_SERVICE_ROLE_KEY: z.string().optional(),
   TELEGRAM_PARTICIPANT_BOT_TOKEN: z.string().optional(),
-  TELEGRAM_ORG_BOT_TOKEN: z.string().optional(),
   PARTICIPANT_BOT_SERVICE_TOKEN: z.string().min(24).optional(),
-  ORG_BOT_SERVICE_TOKEN: z.string().min(24).optional(),
   TELEGRAM_INIT_DATA_MAX_AGE_SECONDS: z.coerce.number().int().positive().default(86400),
-  YOUGILE_BASE_URL: z.string().url().default("https://yougile.com/api-v2"),
-  YOUGILE_API_KEY: z.string().optional(),
-  YOUGILE_PROJECT_ID: z.string().optional(),
-  YOUGILE_DEFAULT_COLUMN_ID: z.string().optional(),
-  YOUGILE_WEBHOOK_SECRET: z.string().min(16).optional(),
   ITMO_EVENTS_BASE_URL: z.string().url().optional(),
   ITMO_EVENTS_API_KEY: z.string().optional(),
   ITMO_EVENTS_WEBHOOK_SECRET: z.string().min(16).optional(),
@@ -50,4 +43,3 @@ export const isSupabaseServerConfigured = Boolean(env.SUPABASE_URL && env.SUPABA
 export const isItmoIdConfigured = Boolean(
   env.ITMO_ID_ISSUER_URL && env.ITMO_ID_CLIENT_ID && env.ITMO_ID_CLIENT_SECRET && env.ITMO_ID_REDIRECT_URI,
 );
-export const isYouGileConfigured = Boolean(env.YOUGILE_API_KEY);

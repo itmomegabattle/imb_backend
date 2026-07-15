@@ -38,13 +38,13 @@ async function dashboard(telegramId: number) {
 }
 
 export async function participantRoutes(app: FastifyInstance) {
-  app.post("/bot/users/upsert", { preHandler: requireService("participant_bot", "org_bot") }, async (request, reply) => {
+  app.post("/bot/users/upsert", { preHandler: requireService("participant_bot") }, async (request, reply) => {
     const parsed = telegramUserSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: "Invalid Telegram user", details: parsed.error.flatten() });
     return upsertTelegramUser(parsed.data);
   });
 
-  app.get("/bot/users/:telegramId/dashboard", { preHandler: requireService("participant_bot", "org_bot") }, async (request, reply) => {
+  app.get("/bot/users/:telegramId/dashboard", { preHandler: requireService("participant_bot") }, async (request, reply) => {
     const telegramId = Number((request.params as { telegramId: string }).telegramId);
     if (!Number.isSafeInteger(telegramId)) return reply.code(400).send({ error: "Invalid Telegram ID" });
     return dashboard(telegramId);

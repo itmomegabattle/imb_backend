@@ -10,7 +10,6 @@ import { requireService } from "../../lib/service-auth.js";
 
 const telegramSchema = z.object({
   initData: z.string().min(1),
-  source: z.enum(["participant_bot", "org_bot"]).default("participant_bot"),
   linkCurrentProfile: z.boolean().default(false),
 });
 
@@ -27,24 +26,22 @@ async function sendSession(reply: any, principal: Parameters<typeof issueSession
 }
 
 export async function authRoutes(app: FastifyInstance) {
-  async function serviceSession(request: any, reply: any, org: boolean) {
+  async function serviceSession(request: any, reply: any) {
     const parsed = z.object({ telegramId: z.number().int().positive() }).safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: "telegramId обязателен" });
     const identity = unwrap(await db().from("account_identities").select("profile_id").eq("provider", "telegram").eq("provider_subject", String(parsed.data.telegramId)).maybeSingle());
     if (!identity) return reply.code(404).send({ error: "Профиль Telegram не найден" });
     const actualRoles = await rolesFor(identity.profile_id);
-    if (org && !actualRoles.some((role) => ["organizer", "admin", "site_admin"].includes(role))) return reply.code(403).send({ error: "Пользователь не является организатором" });
-    const roles = org ? actualRoles : actualRoles.filter((role) => role === "participant");
+    const roles = actualRoles.filter((role) => role === "participant");
     return sendSession(reply, { profileId: identity.profile_id, roles, provider: "telegram", providerSubject: String(parsed.data.telegramId) });
   }
 
-  app.post("/auth/service/participant-session", { preHandler: requireService("participant_bot") }, (request, reply) => serviceSession(request, reply, false));
-  app.post("/auth/service/organizer-session", { preHandler: requireService("org_bot") }, (request, reply) => serviceSession(request, reply, true));
+  app.post("/auth/service/participant-session", { preHandler: requireService("participant_bot") }, serviceSession);
 
   app.post("/auth/telegram/session", { preHandler: optionalSession }, async (request, reply) => {
     const parsed = telegramSchema.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: "Некорректные данные Telegram", details: parsed.error.flatten() });
-    const botToken = parsed.data.source === "org_bot" ? env.TELEGRAM_ORG_BOT_TOKEN : env.TELEGRAM_PARTICIPANT_BOT_TOKEN;
+    const botToken = env.TELEGRAM_PARTICIPANT_BOT_TOKEN;
     if (!botToken) return reply.code(503).send({ error: "Telegram-бот не настроен" });
     try {
       const verified = verifyTelegramInitData(parsed.data.initData, botToken, env.TELEGRAM_INIT_DATA_MAX_AGE_SECONDS);
@@ -54,7 +51,7 @@ export async function authRoutes(app: FastifyInstance) {
         username: verified.user.username,
         fullName: [verified.user.first_name, verified.user.last_name].filter(Boolean).join(" "),
         avatarUrl: verified.user.photo_url,
-        metadata: { languageCode: verified.user.language_code, source: parsed.data.source },
+        metadata: { languageCode: verified.user.language_code, source: "participant_bot" },
         linkToProfileId: parsed.data.linkCurrentProfile ? request.principal?.profileId : undefined,
       });
       return sendSession(reply, { ...identity, provider: "telegram", providerSubject: String(verified.user.id) });
