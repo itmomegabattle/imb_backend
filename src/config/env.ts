@@ -45,7 +45,16 @@ const envSchema = z.object({
   WORKER_INTERVAL_SECONDS: z.coerce.number().int().min(10).default(30),
 });
 
-export const env = envSchema.parse(process.env);
+const parsedEnv = envSchema.safeParse(process.env);
+
+if (!parsedEnv.success) {
+  const details = parsedEnv.error.issues
+    .map((issue) => `${issue.path.join(".") || "environment"}: ${issue.message}`)
+    .join("; ");
+  throw new Error(`Invalid environment variables: ${details}`);
+}
+
+export const env = parsedEnv.data;
 if (env.NODE_ENV === "production" && env.SESSION_SECRET === "development-only-session-secret-change-me") {
   throw new Error("SESSION_SECRET must be changed in production");
 }
