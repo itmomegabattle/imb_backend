@@ -1,6 +1,4 @@
-// Vercel's Fastify detector requires a direct import in the recognized entrypoint.
-import "fastify";
-import { buildApp } from "./build-app.js";
+import { buildApp } from "./app.js";
 import { env } from "./config/env.js";
 
 const app = await buildApp();

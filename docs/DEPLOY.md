@@ -37,7 +37,7 @@ docker run -d --restart unless-stopped --env-file .env -p 4000:4000 imb-backend
 
 ## 4. Vercel — быстрый запуск
 
-Vercel автоматически распознаёт `src/server.ts` как Fastify-приложение и разворачивает его одной Function. Добавьте environment variables и установите `WORKER_ENABLED=false`. Встроенного Vercel Cron в конфигурации намеренно нет, поэтому деплой совместим с Hobby. Для очередей и напоминаний подключите внешний cron раз в 1–5 минут:
+Репозиторий содержит serverless-точку входа `api/index.ts`. В `vercel.json` выбран пресет `Other`, чтобы Vercel не конфликтовал с ручным Fastify handler. Добавьте environment variables и установите `WORKER_ENABLED=false`. Встроенного Vercel Cron в конфигурации намеренно нет, поэтому деплой совместим с Hobby. Для очередей и напоминаний подключите внешний cron раз в 1–5 минут:
 
 ```bash
 curl -X POST https://BACKEND_URL/internal/cron \
