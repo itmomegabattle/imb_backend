@@ -1,8 +1,24 @@
 -- Central Megabattle ecosystem schema. Safe after the website schema.
 create extension if not exists "pgcrypto";
 
-alter table public.profiles alter column auth_user_id drop not null;
-alter table public.profiles alter column isu_number drop not null;
+-- Existing website databases can already be Telegram-only and therefore have no
+-- legacy Supabase Auth column. Keep this migration compatible with both states.
+do $$
+begin
+  if exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'profiles' and column_name = 'auth_user_id'
+  ) then
+    execute 'alter table public.profiles alter column auth_user_id drop not null';
+  end if;
+
+  if exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'profiles' and column_name = 'isu_number'
+  ) then
+    execute 'alter table public.profiles alter column isu_number drop not null';
+  end if;
+end $$;
 
 create table if not exists public.account_identities (
   id uuid primary key default gen_random_uuid(),
@@ -139,8 +155,8 @@ begin
   select profile_id into v_profile_id from public.account_identities
   where provider = 'telegram' and provider_subject = p_telegram_user_id::text;
   if v_profile_id is null then
-    insert into public.profiles (auth_user_id, isu_number, nickname, full_name, avatar_url, telegram_username)
-    values (null, null, coalesce(nullif(p_username, ''), p_first_name || '_' || right(p_telegram_user_id::text, 4)), v_full_name, p_photo_url, p_username)
+    insert into public.profiles (isu_number, nickname, full_name, avatar_url, telegram_username)
+    values (null, coalesce(nullif(p_username, ''), p_first_name || '_' || right(p_telegram_user_id::text, 4)), v_full_name, p_photo_url, p_username)
     returning id into v_profile_id;
     insert into public.account_identities (profile_id, provider, provider_subject, username, metadata, verified_at)
     values (v_profile_id, 'telegram', p_telegram_user_id::text, p_username,

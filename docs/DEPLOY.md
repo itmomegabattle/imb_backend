@@ -2,7 +2,7 @@
 
 ## 1. Supabase
 
-Создайте проект и примените SQL из `supabase/migrations` по порядку. Service Role берётся в Supabase Dashboard → Project Settings → API и добавляется только на backend.
+Для полностью новой базы примените SQL из `supabase/migrations` по порядку. Для существующей базы сайта не повторяйте legacy baseline и story submissions: выполните только `202607150001_ecosystem_core.sql`, `202607150002_full_platform.sql`, `202607160003_beta_core.sql`. Service Role берётся в Supabase Dashboard → Project Settings → API и добавляется только на backend.
 
 Проверка миграций локальной PostgreSQL находится в `supabase/tests/beta_core.sql`. Для чистого пилота можно один раз выполнить `supabase/reset_beta_users.sql`: контент сайта сохранится, пользовательские профили, связи, команды и балансы очистятся.
 
