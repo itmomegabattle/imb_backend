@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildApp } from "../app.js";
+import { buildApp } from "../build-app.js";
 
 test("health endpoint starts without optional integrations", async () => {
   const app = await buildApp();
