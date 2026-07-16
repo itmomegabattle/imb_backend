@@ -16,6 +16,8 @@ const envSchema = z.object({
   SUPABASE_URL: z.string().url().optional(),
   SUPABASE_SERVICE_ROLE_KEY: z.string().optional(),
   TELEGRAM_PARTICIPANT_BOT_TOKEN: z.string().optional(),
+  TELEGRAM_BOT_USERNAME: z.string().default(""),
+  BOOTSTRAP_ADMIN_USERNAME: z.string().default("pypynyaa"),
   PARTICIPANT_BOT_SERVICE_TOKEN: z.string().min(24).optional(),
   TELEGRAM_INIT_DATA_MAX_AGE_SECONDS: z.coerce.number().int().positive().default(86400),
   ITMO_EVENTS_BASE_URL: z.string().url().optional(),

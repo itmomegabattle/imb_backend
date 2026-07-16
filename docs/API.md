@@ -6,8 +6,8 @@
 
 | Метод | URL | Назначение |
 |---|---|---|
+| POST | `/auth/telegram/login` | Telegram Login Widget сайта → backend JWT/cookie |
 | POST | `/auth/telegram/session` | Telegram Mini App → backend JWT/cookie |
-| POST | `/auth/supabase/session` | обмен старой Supabase-сессии |
 | GET | `/auth/itmo/start` | начало OIDC |
 | GET | `/auth/itmo/callback` | callback провайдера |
 | POST | `/auth/itmo/exchange` | одноразовый code → backend session |
@@ -52,11 +52,25 @@ JWT передаётся `Authorization: Bearer TOKEN`. В браузере та
 
 - `GET /game/dashboard` — уровень, XP, место, валюты, достижения, регистрации;
 - `GET /game/leaderboard` — участники и факультеты;
+- `POST /game/transfers` — целочисленный перевод от 10 единиц любому участнику;
 - `POST /game/rewards/redeem` — погасить код;
 - `POST /admin/game/transactions` — ручное начисление/списание;
 - `POST /admin/game/reward-codes` — создать код;
-- `POST /events/:eventId/register` — зарегистрироваться;
+- `POST /events/:eventId/register` — индивидуальная регистрация;
+- `POST /events/:eventId/teams` — создать команду и получить код;
+- `POST /events/teams/join` — вступить по коду;
+- `GET /events/:eventId/team` — состав команды;
+- `PATCH /events/teams/:teamId` — капитан: имя, новый код, состав, капитан, завершение регистрации;
 - `POST /admin/events/:eventId/attendance` — отметить посещение.
+
+## Управление через бот
+
+- `GET/PUT /info` и `/admin/info/:key` — информационная справка;
+- `GET/POST /admin/game/achievements` — справочник ачивок;
+- `POST /admin/game/achievements/grant` — выдача ачивки;
+- `GET /admin/stats` — статистика сезона;
+- `POST/GET /admin/broadcasts` — очередь рассылок;
+- `POST /admin/content/events` — выпуск мероприятия.
 
 ## Интеграции
 

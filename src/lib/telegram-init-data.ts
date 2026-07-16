@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 
 export interface TelegramWebAppUser {
   id: number;
@@ -16,6 +16,42 @@ export interface TelegramInitData {
 }
 
 export class TelegramInitDataError extends Error {}
+
+export interface TelegramLoginPayload {
+  id: number;
+  first_name: string;
+  last_name?: string;
+  username?: string;
+  photo_url?: string;
+  auth_date: number;
+  hash: string;
+}
+
+export function verifyTelegramLoginPayload(
+  payload: TelegramLoginPayload,
+  botToken: string,
+  maxAgeSeconds = 86_400,
+  nowSeconds = Math.floor(Date.now() / 1000),
+) {
+  const { hash, ...values } = payload;
+  const checkString = Object.entries(values)
+    .filter(([, value]) => value !== undefined && value !== null && value !== "")
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, value]) => `${key}=${value}`)
+    .join("\n");
+  const secret = createHash("sha256").update(botToken).digest();
+  const calculated = createHmac("sha256", secret).update(checkString).digest("hex");
+  const receivedBuffer = Buffer.from(hash, "hex");
+  const calculatedBuffer = Buffer.from(calculated, "hex");
+  if (receivedBuffer.length !== calculatedBuffer.length || !timingSafeEqual(receivedBuffer, calculatedBuffer)) {
+    throw new TelegramInitDataError("Telegram Login signature is invalid");
+  }
+  if (!Number.isSafeInteger(payload.id) || !payload.first_name) throw new TelegramInitDataError("Telegram user is incomplete");
+  if (!Number.isInteger(payload.auth_date) || payload.auth_date > nowSeconds + 30 || nowSeconds - payload.auth_date > maxAgeSeconds) {
+    throw new TelegramInitDataError("Telegram Login payload has expired");
+  }
+  return payload;
+}
 
 export function verifyTelegramInitData(
   rawInitData: string,

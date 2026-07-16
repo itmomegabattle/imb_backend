@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { audit, db, unwrap } from "../../lib/db.js";
-import { adminRoles, optionalSession, requireRole, requireSession } from "../../lib/session.js";
+import { adminRoles, optionalSession, requireOnboardedSession, requireRole, requireSession } from "../../lib/session.js";
 
 const tagType = z.enum(["keychain", "card", "removable", "sticker", "other"]);
 const publicProfile = "id,nickname,full_name,faculty,bio,avatar_url,telegram_username,instagram_username,social_links,role_badge,is_best_actor";
@@ -26,9 +26,11 @@ export async function socialRoutes(app: FastifyInstance) {
     return { tags };
   });
 
-  app.post("/api/v1/nfc/:code/claim", { preHandler: requireSession }, async (request, reply) => {
-    const code = (request.params as { code: string }).code;
-    const tag = unwrap(await db().from("nfc_tags").select("id,profile_id,is_active").eq("code", code).maybeSingle());
+  app.post("/api/v1/nfc/:code/claim", { preHandler: requireOnboardedSession }, async (request, reply) => {
+    const parsedCode = z.string().regex(/^[A-Za-z0-9_-]{4,128}$/).safeParse((request.params as { code: string }).code);
+    if (!parsedCode.success) return reply.code(404).send({ error: "Метка не найдена" });
+    const code = parsedCode.data;
+    const tag = unwrap(await db().from("nfc_tags").select("id,profile_id,is_active").or(`code.eq.${code},public_slug.eq.${code}`).maybeSingle());
     if (!tag || !tag.is_active) return reply.code(404).send({ error: "Метка не найдена" });
     if (tag.profile_id && tag.profile_id !== request.principal!.profileId) return reply.code(409).send({ error: "Метка уже привязана" });
     const body = z.object({ label: z.string().max(80).optional(), tagType: tagType.optional() }).parse(request.body ?? {});
@@ -43,7 +45,7 @@ export async function socialRoutes(app: FastifyInstance) {
     await audit(request.principal!.profileId, "nfc.unclaimed", "nfc_tag", id); return { ok: true };
   });
 
-  app.post("/api/v1/connections", { preHandler: requireSession }, async (request, reply) => {
+  app.post("/api/v1/connections", { preHandler: requireOnboardedSession }, async (request, reply) => {
     const body = z.object({ profileId: z.string().uuid(), nfcTagId: z.string().uuid().optional() }).safeParse(request.body);
     if (!body.success) return reply.code(400).send({ error: "Некорректный профиль" });
     if (body.data.profileId === request.principal!.profileId) return reply.code(409).send({ error: "Нельзя добавить самого себя" });
@@ -84,5 +86,15 @@ export async function socialRoutes(app: FastifyInstance) {
     const data = unwrap(await db().from("nfc_tags").insert(tags).select("*"));
     await audit(request.principal!.profileId, "nfc.generated", "nfc_tag", undefined, { count: data?.length ?? 0, type: body.tagType });
     return reply.code(201).send({ tags: data });
+  });
+
+  app.patch("/api/v1/admin/nfc/:id", { preHandler: requireRole(...adminRoles) }, async (request) => {
+    const id = z.string().uuid().parse((request.params as { id: string }).id);
+    const body = z.object({ label: z.string().max(80).nullable().optional(), tag_type: tagType.optional(), is_active: z.boolean().optional(), profile_id: z.string().uuid().nullable().optional() }).parse(request.body);
+    const patch: Record<string, unknown> = { ...body, updated_at: new Date().toISOString() };
+    if (Object.hasOwn(body, "profile_id")) patch.claimed_at = body.profile_id ? new Date().toISOString() : null;
+    const row = unwrap(await db().from("nfc_tags").update(patch).eq("id", id).select("*,profiles(id,nickname,isu_number,faculty,is_banned)").single());
+    await audit(request.principal!.profileId, "nfc.updated", "nfc_tag", id, body);
+    return row;
   });
 }

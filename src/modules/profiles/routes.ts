@@ -4,10 +4,10 @@ import { audit, db, unwrap } from "../../lib/db.js";
 import { adminRoles, requireRole, requireSession } from "../../lib/session.js";
 
 const profilePatch = z.object({
-  nickname: z.string().trim().min(2).max(40).optional(),
+  nickname: z.string().trim().min(2).max(40).regex(/^[\p{L}\p{N}_. -]+$/u, "Недопустимые символы в никнейме").optional(),
   full_name: z.string().trim().max(120).nullable().optional(),
   isu_number: z.string().trim().max(12).nullable().optional(),
-  faculty: z.string().trim().max(100).nullable().optional(),
+  faculty: z.enum(["КТУ", "ТИНТ", "НОЖ", "ФТМФ", "ФТМИ"]).nullable().optional(),
   bio: z.string().trim().max(600).nullable().optional(),
   avatar_url: z.string().url().nullable().optional(),
   telegram_username: z.string().trim().max(64).nullable().optional(),
@@ -38,7 +38,14 @@ export async function profileRoutes(app: FastifyInstance) {
   app.patch("/api/v1/profile", { preHandler: requireSession }, async (request, reply) => {
     const parsed = profilePatch.safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: "Некорректный профиль", details: parsed.error.flatten() });
-    const data = unwrap(await db().from("profiles").update({ ...parsed.data, updated_at: new Date().toISOString() }).eq("id", request.principal!.profileId).select("*").single());
+    const current = unwrap(await db().from("profiles").select("nickname,faculty").eq("id", request.principal!.profileId).single());
+    if (!current) return reply.code(404).send({ error: "Профиль не найден" });
+    const nickname = parsed.data.nickname ?? current.nickname;
+    const faculty = parsed.data.faculty === undefined ? current.faculty : parsed.data.faculty;
+    const result = await db().from("profiles").update({ ...parsed.data, onboarding_completed: Boolean(nickname && faculty), updated_at: new Date().toISOString() }).eq("id", request.principal!.profileId).select("*").single();
+    if (result.error?.code === "23505") return reply.code(409).send({ error: "Этот никнейм уже занят" });
+    if (result.error) throw result.error;
+    const data = result.data;
     await audit(request.principal!.profileId, "profile.updated", "profile", request.principal!.profileId, { fields: Object.keys(parsed.data) });
     return data;
   });
@@ -54,7 +61,7 @@ export async function profileRoutes(app: FastifyInstance) {
   });
 
   app.patch("/api/v1/admin/profiles/:id/moderation", { preHandler: requireRole(...adminRoles) }, async (request, reply) => {
-    const body = z.object({ is_banned: z.boolean().optional(), ban_reason: z.string().max(500).nullable().optional(), role_badge: z.string().max(80).nullable().optional() }).safeParse(request.body);
+    const body = z.object({ is_banned: z.boolean().optional(), ban_reason: z.string().max(500).nullable().optional(), role_badge: z.string().max(80).nullable().optional(), is_best_actor: z.boolean().optional() }).safeParse(request.body);
     if (!body.success) return reply.code(400).send({ error: "Некорректные данные" });
     const id = (request.params as { id: string }).id;
     const data = unwrap(await db().from("profiles").update({ ...body.data, updated_at: new Date().toISOString() }).eq("id", id).select("*").single());

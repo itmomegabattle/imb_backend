@@ -15,6 +15,7 @@ import { mediaRoutes } from "./modules/media/routes.js";
 import { adminRoutes } from "./modules/admin/routes.js";
 import { internalRoutes } from "./modules/internal/routes.js";
 import { itmoEventsRoutes } from "./modules/itmo-events/routes.js";
+import { operationsRoutes } from "./modules/operations/routes.js";
 import { startWorker } from "./services/worker.js";
 import { ZodError } from "zod";
 
@@ -50,6 +51,7 @@ export async function buildApp() {
   await app.register(adminRoutes);
   await app.register(internalRoutes);
   await app.register(itmoEventsRoutes);
+  await app.register(operationsRoutes);
 
   const stopWorker = startWorker(app.log);
   app.addHook("onClose", async () => stopWorker());
@@ -60,8 +62,8 @@ export async function buildApp() {
     const message = error instanceof Error ? error.message : "Unknown error";
     const statusCode = typeof (error as { statusCode?: unknown }).statusCode === "number" ? (error as { statusCode: number }).statusCode : 500;
     return reply.code(statusCode).send({
-      error: "Internal server error",
-      message: env.NODE_ENV === "production" ? "Что-то пошло не так" : message,
+      error: statusCode < 500 ? message : "Что-то пошло не так",
+      ...(env.NODE_ENV !== "production" && statusCode >= 500 ? { message } : {}),
     });
   });
 

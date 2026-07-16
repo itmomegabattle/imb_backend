@@ -15,12 +15,16 @@ async function telegramId(profileId: string) {
 async function sendTelegram(chatId: string, payload: Record<string, unknown>) {
   const token = env.TELEGRAM_PARTICIPANT_BOT_TOKEN;
   if (!token) throw new Error("Participant bot token is not configured");
-  const response = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+  const mediaFileId = typeof payload.mediaFileId === "string" ? payload.mediaFileId : null;
+  const method = mediaFileId ? "sendPhoto" : "sendMessage";
+  const response = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       chat_id: chatId,
-      text: payload.text ?? payload.message ?? "Новое уведомление Megabattle",
+      ...(mediaFileId
+        ? { photo: mediaFileId, caption: payload.text ?? payload.message ?? "Новое уведомление Megabattle" }
+        : { text: payload.text ?? payload.message ?? "Новое уведомление Megabattle" }),
       parse_mode: payload.parseMode ?? "HTML",
       reply_markup: payload.replyMarkup,
     }),
@@ -29,20 +33,9 @@ async function sendTelegram(chatId: string, payload: Record<string, unknown>) {
   if (!response.ok || !body.ok) throw new Error(`Telegram: ${JSON.stringify(body)}`);
 }
 
-async function processNotifications(limit = 25) {
-  const rows = unwrap(await db()
-    .from("notification_queue")
-    .select("*")
-    .eq("status", "pending")
-    .lte("scheduled_at", new Date().toISOString())
-    .order("scheduled_at")
-    .limit(limit)) ?? [];
-
-  for (const row of rows) {
-    unwrap(await db().from("notification_queue")
-      .update({ status: "processing", attempts: row.attempts + 1 })
-      .eq("id", row.id)
-      .eq("status", "pending"));
+async function processNotifications(limit = 100) {
+  const rows = unwrap(await db().rpc("claim_pending_notifications", { p_limit: limit })) ?? [];
+  const processOne = async (row: any) => {
     try {
       if (!row.profile_id) throw new Error("Notification profile is missing");
       const chatId = await telegramId(row.profile_id);
@@ -51,8 +44,9 @@ async function processNotifications(limit = 25) {
       unwrap(await db().from("notification_queue")
         .update({ status: "sent", sent_at: new Date().toISOString(), last_error: null })
         .eq("id", row.id));
+      if (row.broadcast_id) unwrap(await db().from("broadcasts").update({ status: "sending", started_at: new Date().toISOString() }).eq("id", row.broadcast_id).eq("status", "queued"));
     } catch (error) {
-      const attempts = row.attempts + 1;
+      const attempts = row.attempts;
       unwrap(await db().from("notification_queue")
         .update({
           status: attempts >= 5 ? "failed" : "pending",
@@ -61,6 +55,15 @@ async function processNotifications(limit = 25) {
         })
         .eq("id", row.id));
     }
+  };
+  for (let offset = 0; offset < rows.length; offset += 20) await Promise.all(rows.slice(offset, offset + 20).map(processOne));
+  const broadcastIds = [...new Set(rows.map((row: any) => row.broadcast_id).filter(Boolean))];
+  for (const broadcastId of broadcastIds) {
+      const queued = unwrap(await db().from("notification_queue").select("status").eq("broadcast_id", broadcastId)) ?? [];
+      const sent = queued.filter((item: any) => item.status === "sent").length;
+      const failed = queued.filter((item: any) => item.status === "failed").length;
+      const finished = sent + failed === queued.length;
+      unwrap(await db().from("broadcasts").update({ sent_count: sent, failed_count: failed, status: finished ? (sent ? "sent" : "failed") : "sending", finished_at: finished ? new Date().toISOString() : null }).eq("id", broadcastId));
   }
   return rows.length;
 }
@@ -104,19 +107,9 @@ async function processItmoEventsJob(job: any) {
 }
 
 async function processIntegrations(limit = 10) {
-  const jobs = unwrap(await db()
-    .from("integration_jobs")
-    .select("*")
-    .eq("status", "pending")
-    .lte("run_after", new Date().toISOString())
-    .order("created_at")
-    .limit(limit)) ?? [];
+  const jobs = unwrap(await db().rpc("claim_pending_integration_jobs", { p_limit: limit })) ?? [];
 
   for (const job of jobs) {
-    unwrap(await db().from("integration_jobs")
-      .update({ status: "processing", attempts: job.attempts + 1, updated_at: new Date().toISOString() })
-      .eq("id", job.id)
-      .eq("status", "pending"));
     try {
       if (job.integration !== "itmo_events") throw new Error(`${job.integration} worker is not configured`);
       await processItmoEventsJob(job);
@@ -124,7 +117,7 @@ async function processIntegrations(limit = 10) {
         .update({ status: "done", last_error: null, updated_at: new Date().toISOString() })
         .eq("id", job.id));
     } catch (error) {
-      const attempts = job.attempts + 1;
+      const attempts = job.attempts;
       unwrap(await db().from("integration_jobs")
         .update({
           status: attempts >= 8 ? "failed" : "pending",

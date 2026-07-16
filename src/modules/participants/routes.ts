@@ -4,6 +4,8 @@ import { env } from "../../config/env.js";
 import { requireService } from "../../lib/service-auth.js";
 import { TelegramInitDataError, verifyTelegramInitData } from "../../lib/telegram-init-data.js";
 import { requireSupabaseAdmin } from "../../lib/supabase.js";
+import { upsertIdentity } from "../../lib/identity.js";
+import { db, rolesFor, unwrap } from "../../lib/db.js";
 
 const telegramUserSchema = z.object({
   telegramId: z.number().int().positive(),
@@ -17,16 +19,19 @@ const miniAppSchema = z.object({ initData: z.string().min(1) });
 const registrationSchema = z.object({ telegramId: z.number().int().positive() });
 
 async function upsertTelegramUser(input: z.infer<typeof telegramUserSchema>) {
-  const supabase = requireSupabaseAdmin();
-  const { data, error } = await supabase.rpc("upsert_telegram_identity", {
-    p_telegram_user_id: input.telegramId,
-    p_username: input.username ?? null,
-    p_first_name: input.firstName,
-    p_last_name: input.lastName ?? null,
-    p_photo_url: input.photoUrl ?? null,
+  const identity = await upsertIdentity({
+    provider: "telegram",
+    subject: String(input.telegramId),
+    username: input.username ?? null,
+    fullName: [input.firstName, input.lastName].filter(Boolean).join(" "),
+    avatarUrl: input.photoUrl ?? null,
+    metadata: { firstName: input.firstName, lastName: input.lastName, source: "participant_bot" },
   });
-  if (error) throw error;
-  return data;
+  const bootstrapUsername = env.BOOTSTRAP_ADMIN_USERNAME.replace(/^@/, "").toLowerCase();
+  if (input.username?.toLowerCase() === bootstrapUsername) {
+    unwrap(await db().from("profile_roles").upsert({ profile_id: identity.profileId, role: "admin", granted_by: identity.profileId }, { onConflict: "profile_id,role" }));
+  }
+  return { ...identity, telegramId: input.telegramId, roles: await rolesFor(identity.profileId) };
 }
 
 async function dashboard(telegramId: number) {
@@ -86,7 +91,7 @@ export async function participantRoutes(app: FastifyInstance) {
     const supabase = requireSupabaseAdmin();
     const { data, error } = await supabase
       .from("project_events")
-      .select("id, slug, name, type, description, starts_at, ends_at, location, image_url, registration_status, registration_link")
+      .select("id, slug, name, type, description, starts_at, ends_at, location, image_url, registration_status, registration_mode, registration_link, min_team_size, max_team_size")
       .eq("status", "published")
       .eq("group_key", "megabattle")
       .order("starts_at", { ascending: true, nullsFirst: false });

@@ -5,7 +5,7 @@ import { db, rolesFor, unwrap } from "../../lib/db.js";
 import { upsertIdentity } from "../../lib/identity.js";
 import { discoverOidc, issueOidcState, randomCode, sha256, verifyOidcIdToken, verifyOidcState } from "../../lib/oidc.js";
 import { issueSession, optionalSession, requireSession } from "../../lib/session.js";
-import { TelegramInitDataError, verifyTelegramInitData } from "../../lib/telegram-init-data.js";
+import { TelegramInitDataError, verifyTelegramInitData, verifyTelegramLoginPayload } from "../../lib/telegram-init-data.js";
 import { requireService } from "../../lib/service-auth.js";
 
 const telegramSchema = z.object({
@@ -18,7 +18,7 @@ async function sendSession(reply: any, principal: Parameters<typeof issueSession
   reply.setCookie("mb_session", token, {
     httpOnly: true,
     secure: env.NODE_ENV === "production",
-    sameSite: "lax",
+    sameSite: env.NODE_ENV === "production" ? "none" : "lax",
     path: "/",
     maxAge: env.SESSION_TTL_SECONDS,
   });
@@ -31,8 +31,7 @@ export async function authRoutes(app: FastifyInstance) {
     if (!parsed.success) return reply.code(400).send({ error: "telegramId обязателен" });
     const identity = unwrap(await db().from("account_identities").select("profile_id").eq("provider", "telegram").eq("provider_subject", String(parsed.data.telegramId)).maybeSingle());
     if (!identity) return reply.code(404).send({ error: "Профиль Telegram не найден" });
-    const actualRoles = await rolesFor(identity.profile_id);
-    const roles = actualRoles.filter((role) => role === "participant");
+    const roles = await rolesFor(identity.profile_id);
     return sendSession(reply, { profileId: identity.profile_id, roles, provider: "telegram", providerSubject: String(parsed.data.telegramId) });
   }
 
@@ -61,22 +60,25 @@ export async function authRoutes(app: FastifyInstance) {
     }
   });
 
-  app.post("/auth/supabase/session", async (request, reply) => {
-    const parsed = z.object({ accessToken: z.string().min(20) }).safeParse(request.body);
-    if (!parsed.success) return reply.code(400).send({ error: "accessToken обязателен" });
-    const { data, error } = await db().auth.getUser(parsed.data.accessToken);
-    if (error || !data.user) return reply.code(401).send({ error: "Недействительная сессия Supabase" });
-    const meta = data.user.user_metadata ?? {};
-    const identity = await upsertIdentity({
-      provider: "supabase",
-      subject: data.user.id,
-      username: meta.nickname,
-      fullName: meta.full_name,
-      isuNumber: meta.isu_number,
-      email: data.user.email,
-      metadata: meta,
-    });
-    return sendSession(reply, { ...identity, provider: "supabase", providerSubject: data.user.id });
+  app.post("/auth/telegram/login", async (request, reply) => {
+    if (!env.TELEGRAM_PARTICIPANT_BOT_TOKEN) return reply.code(503).send({ error: "Telegram-бот не настроен" });
+    const parsed = z.object({
+      id: z.coerce.number().int().positive(), first_name: z.string().min(1), last_name: z.string().optional(),
+      username: z.string().optional(), photo_url: z.string().url().optional(), auth_date: z.coerce.number().int(), hash: z.string().length(64),
+    }).safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: "Некорректные данные Telegram", details: parsed.error.flatten() });
+    try {
+      const user = verifyTelegramLoginPayload(parsed.data, env.TELEGRAM_PARTICIPANT_BOT_TOKEN, env.TELEGRAM_INIT_DATA_MAX_AGE_SECONDS);
+      const identity = await upsertIdentity({
+        provider: "telegram", subject: String(user.id), username: user.username,
+        fullName: [user.first_name, user.last_name].filter(Boolean).join(" "), avatarUrl: user.photo_url,
+        metadata: { source: "telegram_login_widget" },
+      });
+      return sendSession(reply, { ...identity, provider: "telegram", providerSubject: String(user.id) });
+    } catch (error) {
+      if (error instanceof TelegramInitDataError) return reply.code(401).send({ error: error.message });
+      throw error;
+    }
   });
 
   app.get("/auth/itmo/start", { preHandler: optionalSession }, async (request, reply) => {

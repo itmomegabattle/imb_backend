@@ -1,6 +1,7 @@
 import { db, rolesFor, unwrap } from "./db.js";
+import { env } from "../config/env.js";
 
-export type IdentityProvider = "telegram" | "itmo_id" | "supabase";
+export type IdentityProvider = "telegram" | "itmo_id";
 
 export interface IdentityInput {
   provider: IdentityProvider;
@@ -30,15 +31,26 @@ export async function upsertIdentity(input: IdentityInput) {
       profileId = matched?.id;
     }
     if (!profileId) {
-      const nickname = input.username || input.fullName || `user_${input.subject.slice(-6)}`;
-      const created = unwrap(await db().from("profiles").insert({
-        auth_user_id: input.provider === "supabase" ? input.subject : null,
+      const nickname = (input.username || input.fullName || `user_${input.subject.slice(-6)}`).slice(0, 80);
+      let createdResult = await db().from("profiles").insert({
         isu_number: input.isuNumber ?? null,
-        nickname: nickname.slice(0, 80),
+        nickname,
         full_name: input.fullName ?? null,
         avatar_url: input.avatarUrl ?? null,
         telegram_username: input.provider === "telegram" ? input.username : null,
-      }).select("id").single());
+      }).select("id").single();
+      if (createdResult.error?.code === "23505") {
+        const fallbackNickname = `${nickname.slice(0, 67)}_${input.subject.slice(-8)}`;
+        createdResult = await db().from("profiles").insert({
+          isu_number: input.isuNumber ?? null,
+          nickname: fallbackNickname,
+          full_name: input.fullName ?? null,
+          avatar_url: input.avatarUrl ?? null,
+          telegram_username: input.provider === "telegram" ? input.username : null,
+        }).select("id").single();
+      }
+      if (createdResult.error) throw createdResult.error;
+      const created = createdResult.data;
       if (!created) throw new Error("Не удалось создать профиль");
       profileId = created.id;
     }
@@ -66,6 +78,10 @@ export async function upsertIdentity(input: IdentityInput) {
   if (input.isuNumber) patch.isu_number = input.isuNumber;
   if (input.provider === "telegram" && input.username) patch.telegram_username = input.username;
   unwrap(await db().from("profiles").update(patch).eq("id", profileId));
+
+  if (input.provider === "telegram" && input.username?.replace(/^@/, "").toLowerCase() === env.BOOTSTRAP_ADMIN_USERNAME.replace(/^@/, "").toLowerCase()) {
+    unwrap(await db().from("profile_roles").upsert({ profile_id: profileId, role: "admin", granted_by: profileId }, { onConflict: "profile_id,role" }));
+  }
 
   if (!profileId) throw new Error("Не удалось определить профиль");
   return { profileId, roles: await rolesFor(profileId) };

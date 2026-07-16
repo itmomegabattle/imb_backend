@@ -26,7 +26,7 @@ export async function healthRoutes(app: FastifyInstance) {
       return { table, ok: !result.error, error: result.error?.message };
     }));
     const version = checks.at(-1)?.ok
-      ? await db().from("backend_schema_versions").select("version").eq("version", "202607150002_full_platform").maybeSingle()
+      ? await db().from("backend_schema_versions").select("version").eq("version", "202607160003_beta_core").maybeSingle()
       : { data: null };
     const ready = checks.every((check) => check.ok) && Boolean(version.data);
     return reply.code(ready ? 200 : 503).send({ ready, schemaVersion: version.data?.version ?? null, checks, hint: ready ? undefined : "Примените все SQL из supabase/migrations по порядку" });

@@ -8,7 +8,7 @@ export type EcosystemRole = "participant" | "admin" | "site_admin";
 export interface SessionPrincipal {
   profileId: string;
   roles: EcosystemRole[];
-  provider: "telegram" | "itmo_id" | "supabase";
+  provider: "telegram" | "itmo_id";
   providerSubject: string;
 }
 
@@ -71,6 +71,21 @@ export async function requireSession(request: FastifyRequest, reply: FastifyRepl
     return reply.code(403).send({ error: "Профиль заблокирован или удалён" });
   }
   request.principal.roles = await rolesFor(request.principal.profileId);
+}
+
+export async function requireOnboardedSession(request: FastifyRequest, reply: FastifyReply) {
+  const rejected = await requireSession(request, reply);
+  if (rejected || !request.principal) return rejected;
+  const profile = unwrap(await db().from("profiles")
+    .select("onboarding_completed,nickname,faculty")
+    .eq("id", request.principal.profileId)
+    .maybeSingle());
+  if (!profile?.onboarding_completed || !profile.nickname || !profile.faculty) {
+    return reply.code(428).send({
+      error: "Сначала заполни имя или никнейм и выбери факультет",
+      code: "ONBOARDING_REQUIRED",
+    });
+  }
 }
 
 export function requireRole(...roles: EcosystemRole[]) {
