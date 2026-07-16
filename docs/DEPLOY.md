@@ -37,7 +37,7 @@ docker run -d --restart unless-stopped --env-file .env -p 4000:4000 imb-backend
 
 ## 4. Vercel — быстрый запуск
 
-Репозиторий содержит `api/index.ts` и `vercel.json`. Добавьте environment variables и разверните проект. На Vercel установите `WORKER_ENABLED=false`. Конфигурация содержит ежеминутный Cron; такой интервал требует Vercel Pro. На Hobby используйте внешний cron, который делает:
+Репозиторий содержит `api/index.ts` и `vercel.json`. Добавьте environment variables и разверните проект. На Vercel установите `WORKER_ENABLED=false`. Встроенного Vercel Cron в конфигурации намеренно нет, поэтому деплой совместим с Hobby. Для очередей и напоминаний подключите внешний cron раз в 1–5 минут:
 
 ```bash
 curl -X POST https://BACKEND_URL/internal/cron \
