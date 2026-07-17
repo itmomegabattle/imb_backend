@@ -33,7 +33,7 @@ function telegramReturnUrl(startToken: string) {
     telegram_attempt: startToken,
     telegram_secret: webLoginBrowserSecret(startToken),
   });
-  return `${env.PUBLIC_SITE_URL.replace(/\/$/, "")}/auth#${params.toString()}`;
+  return `${env.PUBLIC_SITE_URL.replace(/\/$/, "")}/ratings#${params.toString()}`;
 }
 
 async function sendSession(reply: any, principal: Parameters<typeof issueSession>[0]) {
