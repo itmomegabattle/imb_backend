@@ -62,11 +62,18 @@ export async function operationsRoutes(app: FastifyInstance) {
       const profile = Array.isArray(row.profiles) ? row.profiles[0] : row.profiles;
       return profile?.onboarding_completed && !profile?.is_banned && !profile?.deleted_at;
     }).map((row: any) => row.profile_id))];
-    let broadcast = unwrap(await db().from("broadcasts").upsert({ created_by: request.principal!.profileId, text: body.text, media_file_id: body.mediaFileId ?? null, status: "queued", total_count: profileIds.length, idempotency_key: idempotencyKey }, { onConflict: "idempotency_key", ignoreDuplicates: true }).select("*").maybeSingle());
-    if (!broadcast) {
-      broadcast = unwrap(await db().from("broadcasts").select("*").eq("idempotency_key", idempotencyKey).single());
-      return reply.code(202).send(broadcast);
+    const inserted = await db().from("broadcasts").insert({ created_by: request.principal!.profileId, text: body.text, media_file_id: body.mediaFileId ?? null, status: "queued", total_count: profileIds.length, idempotency_key: idempotencyKey }).select("*").single();
+    if (inserted.error) {
+      // idempotency_key is protected by a partial unique index. PostgREST cannot
+      // target a partial index through upsert(onConflict), so resolve the rare
+      // concurrent duplicate explicitly instead.
+      if (inserted.error.code === "23505") {
+        const duplicate = unwrap(await db().from("broadcasts").select("*").eq("idempotency_key", idempotencyKey).single());
+        return reply.code(202).send(duplicate);
+      }
+      throw inserted.error;
     }
+    const broadcast = inserted.data;
     for (let offset = 0; offset < profileIds.length; offset += 250) {
       const rows = profileIds.slice(offset, offset + 250).map((profileId) => ({ profile_id: profileId, bot: "participant", type: "broadcast", broadcast_id: broadcast.id, payload: { text: body.text, mediaFileId: body.mediaFileId ?? null }, idempotency_key: `broadcast:${broadcast.id}:${profileId}` }));
       unwrap(await db().from("notification_queue").insert(rows));
