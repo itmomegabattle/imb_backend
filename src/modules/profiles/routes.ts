@@ -52,7 +52,7 @@ export async function profileRoutes(app: FastifyInstance) {
 
   app.get("/api/v1/admin/profiles", { preHandler: requireRole(...adminRoles) }, async (request) => {
     const q = z.object({ search: z.string().max(100).optional(), limit: z.coerce.number().int().min(1).max(100).default(10), offset: z.coerce.number().int().min(0).default(0), includeDeleted: z.coerce.boolean().default(false) }).parse(request.query);
-    let query = db().from("profiles").select("*,profile_roles(role),account_identities(provider,provider_subject,username)", { count: "exact" }).order("nickname").range(q.offset, q.offset + q.limit - 1);
+    let query = db().from("profiles").select("*,profile_roles!profile_roles_profile_id_fkey(role),account_identities(provider,provider_subject,username)", { count: "exact" }).order("nickname").range(q.offset, q.offset + q.limit - 1);
     if (!q.includeDeleted) query = query.is("deleted_at", null);
     if (q.search) query = query.or(`nickname.ilike.%${q.search.replace(/[%_,]/g, "")}%,isu_number.ilike.%${q.search.replace(/[%_,]/g, "")}%,full_name.ilike.%${q.search.replace(/[%_,]/g, "")}%`);
     const result = await query;
