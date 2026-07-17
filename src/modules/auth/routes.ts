@@ -1,4 +1,5 @@
 import type { FastifyInstance } from "fastify";
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { env, isItmoIdConfigured } from "../../config/env.js";
 import { db, rolesFor, unwrap } from "../../lib/db.js";
@@ -12,6 +13,28 @@ const telegramSchema = z.object({
   initData: z.string().min(1),
   linkCurrentProfile: z.boolean().default(false),
 });
+
+const webLoginTokenSchema = z.string().regex(/^[A-Za-z0-9_-]{32}$/);
+
+function webLoginBrowserSecret(startToken: string) {
+  return createHmac("sha256", env.SESSION_SECRET)
+    .update(`telegram-web-login:${startToken}`)
+    .digest("base64url");
+}
+
+function validBrowserSecret(startToken: string, browserSecret: string) {
+  const expected = Buffer.from(webLoginBrowserSecret(startToken));
+  const received = Buffer.from(browserSecret);
+  return expected.length === received.length && timingSafeEqual(expected, received);
+}
+
+function telegramReturnUrl(startToken: string) {
+  const params = new URLSearchParams({
+    telegram_attempt: startToken,
+    telegram_secret: webLoginBrowserSecret(startToken),
+  });
+  return `${env.PUBLIC_SITE_URL.replace(/\/$/, "")}/auth#${params.toString()}`;
+}
 
 async function sendSession(reply: any, principal: Parameters<typeof issueSession>[0]) {
   const token = await issueSession(principal);
@@ -36,6 +59,86 @@ export async function authRoutes(app: FastifyInstance) {
   }
 
   app.post("/auth/service/participant-session", { preHandler: requireService("participant_bot") }, serviceSession);
+
+  app.post("/auth/service/telegram-web-login/approve", { preHandler: requireService("participant_bot") }, async (request, reply) => {
+    const parsed = z.object({
+      startToken: webLoginTokenSchema,
+      telegramId: z.number().int().positive(),
+    }).safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: "Некорректная попытка входа" });
+
+    const identity = unwrap(await db()
+      .from("account_identities")
+      .select("profile_id")
+      .eq("provider", "telegram")
+      .eq("provider_subject", String(parsed.data.telegramId))
+      .maybeSingle());
+    if (!identity) return reply.code(404).send({ error: "Сначала запусти бота ещё раз" });
+
+    const codeHash = sha256(`telegram-web:${parsed.data.startToken}`);
+    const existing = unwrap(await db().from("auth_exchange_codes").select("*").eq("code_hash", codeHash).maybeSingle());
+    if (existing && (existing.profile_id !== identity.profile_id || existing.consumed_at)) {
+      return reply.code(409).send({ error: "Эта ссылка входа уже использована" });
+    }
+    if (!existing) {
+      unwrap(await db().from("auth_exchange_codes").insert({
+        code_hash: codeHash,
+        profile_id: identity.profile_id,
+        provider: "telegram",
+        provider_subject: String(parsed.data.telegramId),
+        expires_at: new Date(Date.now() + 10 * 60_000).toISOString(),
+      }));
+    }
+    return {
+      ok: true,
+      returnUrl: telegramReturnUrl(parsed.data.startToken),
+      expiresIn: 600,
+    };
+  });
+
+  app.post("/auth/telegram/web/start", async (_request, reply) => {
+    const username = env.TELEGRAM_BOT_USERNAME.replace(/^@/, "");
+    if (!username) return reply.code(503).send({ error: "Telegram-бот не настроен" });
+    const startToken = randomCode(24);
+    return {
+      startToken,
+      browserSecret: webLoginBrowserSecret(startToken),
+      botUrl: `https://t.me/${username}?start=login_${startToken}`,
+      expiresAt: new Date(Date.now() + 10 * 60_000).toISOString(),
+    };
+  });
+
+  app.post("/auth/telegram/web/complete", async (request, reply) => {
+    const parsed = z.object({
+      startToken: webLoginTokenSchema,
+      browserSecret: z.string().min(32).max(128),
+    }).safeParse(request.body);
+    if (!parsed.success || !validBrowserSecret(parsed.data.startToken, parsed.data.browserSecret)) {
+      return reply.code(401).send({ error: "Некорректная попытка входа" });
+    }
+
+    const codeHash = sha256(`telegram-web:${parsed.data.startToken}`);
+    const row = unwrap(await db().from("auth_exchange_codes").select("*").eq("code_hash", codeHash).maybeSingle());
+    if (!row) return reply.code(202).send({ authenticated: false, status: "pending" });
+    if (row.consumed_at) return reply.code(409).send({ error: "Ссылка входа уже использована" });
+    if (new Date(row.expires_at).getTime() <= Date.now()) return reply.code(410).send({ error: "Время подтверждения истекло" });
+
+    const consumed = unwrap(await db().from("auth_exchange_codes")
+      .update({ consumed_at: new Date().toISOString() })
+      .eq("id", row.id)
+      .is("consumed_at", null)
+      .select("*")
+      .maybeSingle());
+    if (!consumed) return reply.code(409).send({ error: "Ссылка входа уже использована" });
+    const roles = await rolesFor(row.profile_id);
+    const session = await sendSession(reply, {
+      profileId: row.profile_id,
+      roles,
+      provider: "telegram",
+      providerSubject: row.provider_subject,
+    });
+    return { authenticated: true, ...session };
+  });
 
   app.post("/auth/telegram/session", { preHandler: optionalSession }, async (request, reply) => {
     const parsed = telegramSchema.safeParse(request.body);
