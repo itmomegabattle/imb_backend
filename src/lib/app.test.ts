@@ -10,6 +10,18 @@ test("health endpoint starts without optional integrations", async () => {
   await app.close();
 });
 
+test("auth status is anonymous without a session", async () => {
+  const app = await buildApp();
+  const response = await app.inject({ method: "GET", url: "/auth/me" });
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(response.json(), {
+    authenticated: false,
+    principal: null,
+    profile: null,
+  });
+  await app.close();
+});
+
 test("participant bot endpoints reject missing service token", async () => {
   const app = await buildApp();
   const response = await app.inject({

@@ -129,7 +129,10 @@ export async function authRoutes(app: FastifyInstance) {
     return sendSession(reply, { profileId: row.profile_id, roles: await rolesFor(row.profile_id), provider: "itmo_id", providerSubject: row.provider_subject });
   });
 
-  app.get("/auth/me", { preHandler: requireSession }, async (request) => {
+  app.get("/auth/me", { preHandler: optionalSession }, async (request) => {
+    if (!request.principal) {
+      return { authenticated: false, principal: null, profile: null };
+    }
     const profile = unwrap(await db().from("profiles").select("*").eq("id", request.principal!.profileId).maybeSingle());
     return { authenticated: true, principal: request.principal, profile };
   });
