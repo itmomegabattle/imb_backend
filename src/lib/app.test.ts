@@ -22,6 +22,21 @@ test("auth status is anonymous without a session", async () => {
   await app.close();
 });
 
+test("Telegram OIDC reports missing BotFather configuration", async () => {
+  const app = await buildApp();
+  const response = await app.inject({
+    method: "POST",
+    url: "/auth/telegram/oidc/start",
+    payload: {
+      codeChallenge: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNO12_3456789-abc",
+      returnTo: "http://localhost:5173/ratings",
+    },
+  });
+  assert.equal(response.statusCode, 503);
+  assert.match(response.json().error, /BotFather/);
+  await app.close();
+});
+
 test("participant bot endpoints reject missing service token", async () => {
   const app = await buildApp();
   const response = await app.inject({

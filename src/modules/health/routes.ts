@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import { env, isItmoIdConfigured, isSupabaseServerConfigured } from "../../config/env.js";
+import { env, isItmoIdConfigured, isSupabaseServerConfigured, isTelegramOidcConfigured } from "../../config/env.js";
 import { db } from "../../lib/db.js";
 
 export async function healthRoutes(app: FastifyInstance) {
@@ -8,6 +8,7 @@ export async function healthRoutes(app: FastifyInstance) {
     service: "itmomegabattle-backend",
     checks: {
       supabase: isSupabaseServerConfigured ? "configured" : "missing-env",
+      telegramOidc: isTelegramOidcConfigured ? "configured" : "missing-env",
       itmoId: isItmoIdConfigured ? "configured" : "missing-env",
     },
     now: new Date().toISOString(),

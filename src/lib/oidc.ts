@@ -28,6 +28,62 @@ export async function verifyOidcState(token: string): Promise<OidcState> {
 
 export function randomCode(bytes = 32) { return randomBytes(bytes).toString("base64url"); }
 export function sha256(value: string) { return createHash("sha256").update(value).digest("hex"); }
+export function sha256Base64Url(value: string) { return createHash("sha256").update(value).digest("base64url"); }
+
+export interface TelegramOidcState {
+  returnTo: string;
+  nonce: string;
+  codeChallenge: string;
+}
+
+export async function issueTelegramOidcState(state: TelegramOidcState) {
+  return new SignJWT(state as unknown as Record<string, unknown>)
+    .setProtectedHeader({ alg: "HS256" })
+    .setIssuer("itmomegabattle-backend")
+    .setAudience("telegram-login-state")
+    .setIssuedAt()
+    .setExpirationTime("5m")
+    .sign(key);
+}
+
+export async function verifyTelegramOidcState(token: string): Promise<TelegramOidcState> {
+  const { payload } = await jwtVerify(token, key, { issuer: "itmomegabattle-backend", audience: "telegram-login-state" });
+  if (typeof payload.returnTo !== "string" || typeof payload.nonce !== "string" || typeof payload.codeChallenge !== "string") {
+    throw new Error("Invalid Telegram OIDC state");
+  }
+  return { returnTo: payload.returnTo, nonce: payload.nonce, codeChallenge: payload.codeChallenge };
+}
+
+interface TelegramOidcDiscovery {
+  issuer: string;
+  authorization_endpoint: string;
+  token_endpoint: string;
+  jwks_uri: string;
+}
+
+let cachedTelegramDiscovery: { value: TelegramOidcDiscovery; expiresAt: number } | undefined;
+export async function discoverTelegramOidc(): Promise<TelegramOidcDiscovery> {
+  if (cachedTelegramDiscovery && cachedTelegramDiscovery.expiresAt > Date.now()) return cachedTelegramDiscovery.value;
+  const response = await fetch("https://oauth.telegram.org/.well-known/openid-configuration");
+  if (!response.ok) throw new Error(`Telegram OIDC discovery failed: ${response.status}`);
+  const value = await response.json() as TelegramOidcDiscovery;
+  if (value.issuer !== "https://oauth.telegram.org" || !value.authorization_endpoint || !value.token_endpoint || !value.jwks_uri) {
+    throw new Error("Telegram OIDC discovery is incomplete");
+  }
+  cachedTelegramDiscovery = { value, expiresAt: Date.now() + 3600_000 };
+  return value;
+}
+
+export async function verifyTelegramOidcIdToken(token: string, nonce: string, discovery: TelegramOidcDiscovery) {
+  if (!env.TELEGRAM_OIDC_CLIENT_ID) throw new Error("Telegram OIDC is not configured");
+  const jwks = createRemoteJWKSet(new URL(discovery.jwks_uri));
+  const { payload } = await jwtVerify(token, jwks, {
+    issuer: "https://oauth.telegram.org",
+    audience: env.TELEGRAM_OIDC_CLIENT_ID,
+  });
+  if (payload.nonce !== nonce) throw new Error("Telegram OIDC nonce mismatch");
+  return payload;
+}
 
 export interface OidcDiscovery {
   issuer: string;

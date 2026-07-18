@@ -1,10 +1,9 @@
 import type { FastifyInstance } from "fastify";
-import { createHmac, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
-import { env, isItmoIdConfigured } from "../../config/env.js";
+import { env, isItmoIdConfigured, isTelegramOidcConfigured } from "../../config/env.js";
 import { db, rolesFor, unwrap } from "../../lib/db.js";
 import { upsertIdentity } from "../../lib/identity.js";
-import { discoverOidc, issueOidcState, randomCode, sha256, verifyOidcIdToken, verifyOidcState } from "../../lib/oidc.js";
+import { discoverOidc, discoverTelegramOidc, issueOidcState, issueTelegramOidcState, randomCode, sha256, sha256Base64Url, verifyOidcIdToken, verifyOidcState, verifyTelegramOidcIdToken, verifyTelegramOidcState } from "../../lib/oidc.js";
 import { issueSession, optionalSession, requireSession } from "../../lib/session.js";
 import { TelegramInitDataError, verifyTelegramInitData, verifyTelegramLoginPayload } from "../../lib/telegram-init-data.js";
 import { requireService } from "../../lib/service-auth.js";
@@ -13,28 +12,6 @@ const telegramSchema = z.object({
   initData: z.string().min(1),
   linkCurrentProfile: z.boolean().default(false),
 });
-
-const webLoginTokenSchema = z.string().regex(/^[A-Za-z0-9_-]{32}$/);
-
-function webLoginBrowserSecret(startToken: string) {
-  return createHmac("sha256", env.SESSION_SECRET)
-    .update(`telegram-web-login:${startToken}`)
-    .digest("base64url");
-}
-
-function validBrowserSecret(startToken: string, browserSecret: string) {
-  const expected = Buffer.from(webLoginBrowserSecret(startToken));
-  const received = Buffer.from(browserSecret);
-  return expected.length === received.length && timingSafeEqual(expected, received);
-}
-
-function telegramReturnUrl(startToken: string) {
-  const params = new URLSearchParams({
-    telegram_attempt: startToken,
-    telegram_secret: webLoginBrowserSecret(startToken),
-  });
-  return `${env.PUBLIC_SITE_URL.replace(/\/$/, "")}/ratings#${params.toString()}`;
-}
 
 async function sendSession(reply: any, principal: Parameters<typeof issueSession>[0]) {
   const token = await issueSession(principal);
@@ -60,82 +37,102 @@ export async function authRoutes(app: FastifyInstance) {
 
   app.post("/auth/service/participant-session", { preHandler: requireService("participant_bot") }, serviceSession);
 
-  app.post("/auth/service/telegram-web-login/approve", { preHandler: requireService("participant_bot") }, async (request, reply) => {
+  app.post("/auth/telegram/oidc/start", async (request, reply) => {
+    if (!isTelegramOidcConfigured) return reply.code(503).send({ error: "Telegram Login пока не настроен в BotFather" });
     const parsed = z.object({
-      startToken: webLoginTokenSchema,
-      telegramId: z.number().int().positive(),
+      codeChallenge: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
+      returnTo: z.string().url().optional(),
     }).safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: "Некорректная попытка входа" });
 
-    const identity = unwrap(await db()
-      .from("account_identities")
-      .select("profile_id")
-      .eq("provider", "telegram")
-      .eq("provider_subject", String(parsed.data.telegramId))
-      .maybeSingle());
-    if (!identity) return reply.code(404).send({ error: "Сначала запусти бота ещё раз" });
-
-    const codeHash = sha256(`telegram-web:${parsed.data.startToken}`);
-    const existing = unwrap(await db().from("auth_exchange_codes").select("*").eq("code_hash", codeHash).maybeSingle());
-    if (existing && (existing.profile_id !== identity.profile_id || existing.consumed_at)) {
-      return reply.code(409).send({ error: "Эта ссылка входа уже использована" });
-    }
-    if (!existing) {
-      unwrap(await db().from("auth_exchange_codes").insert({
-        code_hash: codeHash,
-        profile_id: identity.profile_id,
-        provider: "telegram",
-        provider_subject: String(parsed.data.telegramId),
-        expires_at: new Date(Date.now() + 10 * 60_000).toISOString(),
-      }));
-    }
-    return {
-      ok: true,
-      returnUrl: telegramReturnUrl(parsed.data.startToken),
-      expiresIn: 600,
-    };
+    const siteOrigin = new URL(env.PUBLIC_SITE_URL).origin;
+    const requestedReturn = parsed.data.returnTo ? new URL(parsed.data.returnTo) : null;
+    const returnTo = requestedReturn?.origin === siteOrigin
+      ? requestedReturn.toString()
+      : `${env.PUBLIC_SITE_URL.replace(/\/$/, "")}/ratings`;
+    const nonce = randomCode(20);
+    const state = await issueTelegramOidcState({ returnTo, nonce, codeChallenge: parsed.data.codeChallenge });
+    const discovery = await discoverTelegramOidc();
+    const authUrl = new URL(discovery.authorization_endpoint);
+    for (const [key, value] of Object.entries({
+      client_id: env.TELEGRAM_OIDC_CLIENT_ID!,
+      redirect_uri: env.TELEGRAM_OIDC_REDIRECT_URI!,
+      response_type: "code",
+      scope: "openid profile telegram:bot_access",
+      state,
+      nonce,
+      code_challenge: parsed.data.codeChallenge,
+      code_challenge_method: "S256",
+    })) authUrl.searchParams.set(key, value);
+    return { authorizationUrl: authUrl.toString(), state, expiresAt: new Date(Date.now() + 5 * 60_000).toISOString() };
   });
 
-  app.post("/auth/telegram/web/start", async (_request, reply) => {
-    const username = env.TELEGRAM_BOT_USERNAME.replace(/^@/, "");
-    if (!username) return reply.code(503).send({ error: "Telegram-бот не настроен" });
-    const startToken = randomCode(24);
-    return {
-      startToken,
-      browserSecret: webLoginBrowserSecret(startToken),
-      botUrl: `https://t.me/${username}?start=login_${startToken}`,
-      expiresAt: new Date(Date.now() + 10 * 60_000).toISOString(),
-    };
+  app.get("/auth/telegram/oidc/callback", async (request, reply) => {
+    const query = z.object({ code: z.string().optional(), state: z.string().optional(), error: z.string().optional() }).parse(request.query);
+    if (!query.state) {
+      return reply.redirect(`${env.PUBLIC_SITE_URL.replace(/\/$/, "")}/ratings#telegram_error=missing_state`);
+    }
+    try {
+      const state = await verifyTelegramOidcState(query.state);
+      const redirect = new URL(state.returnTo);
+      if (query.error || !query.code) {
+        redirect.hash = new URLSearchParams({ telegram_error: query.error ?? "missing_code" }).toString();
+      } else {
+        redirect.hash = new URLSearchParams({ telegram_code: query.code, telegram_state: query.state }).toString();
+      }
+      return reply.redirect(redirect.toString());
+    } catch {
+      return reply.redirect(`${env.PUBLIC_SITE_URL.replace(/\/$/, "")}/ratings#telegram_error=invalid_state`);
+    }
   });
 
-  app.post("/auth/telegram/web/complete", async (request, reply) => {
+  app.post("/auth/telegram/oidc/complete", async (request, reply) => {
+    if (!isTelegramOidcConfigured) return reply.code(503).send({ error: "Telegram Login пока не настроен в BotFather" });
     const parsed = z.object({
-      startToken: webLoginTokenSchema,
-      browserSecret: z.string().min(32).max(128),
+      code: z.string().min(8).max(4096),
+      state: z.string().min(32).max(4096),
+      codeVerifier: z.string().regex(/^[A-Za-z0-9_-]{43,128}$/),
     }).safeParse(request.body);
-    if (!parsed.success || !validBrowserSecret(parsed.data.startToken, parsed.data.browserSecret)) {
-      return reply.code(401).send({ error: "Некорректная попытка входа" });
+    if (!parsed.success) return reply.code(400).send({ error: "Некорректный ответ Telegram" });
+
+    const state = await verifyTelegramOidcState(parsed.data.state);
+    if (sha256Base64Url(parsed.data.codeVerifier) !== state.codeChallenge) {
+      return reply.code(401).send({ error: "Попытка входа создана в другом браузере" });
     }
-
-    const codeHash = sha256(`telegram-web:${parsed.data.startToken}`);
-    const row = unwrap(await db().from("auth_exchange_codes").select("*").eq("code_hash", codeHash).maybeSingle());
-    if (!row) return reply.code(202).send({ authenticated: false, status: "pending" });
-    if (row.consumed_at) return reply.code(409).send({ error: "Ссылка входа уже использована" });
-    if (new Date(row.expires_at).getTime() <= Date.now()) return reply.code(410).send({ error: "Время подтверждения истекло" });
-
-    const consumed = unwrap(await db().from("auth_exchange_codes")
-      .update({ consumed_at: new Date().toISOString() })
-      .eq("id", row.id)
-      .is("consumed_at", null)
-      .select("*")
-      .maybeSingle());
-    if (!consumed) return reply.code(409).send({ error: "Ссылка входа уже использована" });
-    const roles = await rolesFor(row.profile_id);
-    const session = await sendSession(reply, {
-      profileId: row.profile_id,
-      roles,
+    const discovery = await discoverTelegramOidc();
+    const basic = Buffer.from(`${env.TELEGRAM_OIDC_CLIENT_ID}:${env.TELEGRAM_OIDC_CLIENT_SECRET}`).toString("base64");
+    const tokenResponse = await fetch(discovery.token_endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded", Authorization: `Basic ${basic}` },
+      body: new URLSearchParams({
+        grant_type: "authorization_code",
+        code: parsed.data.code,
+        redirect_uri: env.TELEGRAM_OIDC_REDIRECT_URI!,
+        client_id: env.TELEGRAM_OIDC_CLIENT_ID!,
+        code_verifier: parsed.data.codeVerifier,
+      }),
+    });
+    const tokens = await tokenResponse.json() as { id_token?: string; error?: string; error_description?: string };
+    if (!tokenResponse.ok || !tokens.id_token) {
+      return reply.code(401).send({ error: tokens.error_description ?? tokens.error ?? "Telegram не подтвердил вход" });
+    }
+    const claims = await verifyTelegramOidcIdToken(tokens.id_token, state.nonce, discovery);
+    if (typeof claims.sub !== "string") return reply.code(401).send({ error: "Telegram не вернул идентификатор пользователя" });
+    const telegramSubject = typeof claims.id === "number" || typeof claims.id === "string"
+      ? String(claims.id)
+      : claims.sub;
+    const identity = await upsertIdentity({
       provider: "telegram",
-      providerSubject: row.provider_subject,
+      subject: telegramSubject,
+      username: typeof claims.preferred_username === "string" ? claims.preferred_username : undefined,
+      fullName: typeof claims.name === "string" ? claims.name : undefined,
+      avatarUrl: typeof claims.picture === "string" ? claims.picture : undefined,
+      metadata: { source: "telegram_oidc", oidcSubject: claims.sub, claims },
+    });
+    const session = await sendSession(reply, {
+      ...identity,
+      provider: "telegram",
+      providerSubject: telegramSubject,
     });
     return { authenticated: true, ...session };
   });

@@ -30,6 +30,9 @@ const envSchema = z.object({
   SUPABASE_SERVICE_ROLE_KEY: optionalEnv(z.string()),
   TELEGRAM_PARTICIPANT_BOT_TOKEN: optionalEnv(z.string()),
   TELEGRAM_BOT_USERNAME: z.string().default(""),
+  TELEGRAM_OIDC_CLIENT_ID: optionalEnv(z.string()),
+  TELEGRAM_OIDC_CLIENT_SECRET: optionalEnv(z.string()),
+  TELEGRAM_OIDC_REDIRECT_URI: optionalEnv(z.string().url()),
   BOOTSTRAP_ADMIN_USERNAME: z.string().default("pypynyaa"),
   PARTICIPANT_BOT_SERVICE_TOKEN: optionalEnv(z.string().min(24)),
   TELEGRAM_INIT_DATA_MAX_AGE_SECONDS: z.coerce.number().int().positive().default(86400),
@@ -64,6 +67,9 @@ export const corsOrigins = env.CORS_ORIGINS.split(",")
   .filter(Boolean);
 
 export const isSupabaseServerConfigured = Boolean(env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY);
+export const isTelegramOidcConfigured = Boolean(
+  env.TELEGRAM_OIDC_CLIENT_ID && env.TELEGRAM_OIDC_CLIENT_SECRET && env.TELEGRAM_OIDC_REDIRECT_URI,
+);
 export const isItmoIdConfigured = Boolean(
   env.ITMO_ID_ISSUER_URL && env.ITMO_ID_CLIENT_ID && env.ITMO_ID_CLIENT_SECRET && env.ITMO_ID_REDIRECT_URI,
 );
