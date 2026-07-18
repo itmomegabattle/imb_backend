@@ -30,30 +30,6 @@ export function randomCode(bytes = 32) { return randomBytes(bytes).toString("bas
 export function sha256(value: string) { return createHash("sha256").update(value).digest("hex"); }
 export function sha256Base64Url(value: string) { return createHash("sha256").update(value).digest("base64url"); }
 
-export interface TelegramOidcState {
-  returnTo: string;
-  nonce: string;
-  codeChallenge: string;
-}
-
-export async function issueTelegramOidcState(state: TelegramOidcState) {
-  return new SignJWT(state as unknown as Record<string, unknown>)
-    .setProtectedHeader({ alg: "HS256" })
-    .setIssuer("itmomegabattle-backend")
-    .setAudience("telegram-login-state")
-    .setIssuedAt()
-    .setExpirationTime("5m")
-    .sign(key);
-}
-
-export async function verifyTelegramOidcState(token: string): Promise<TelegramOidcState> {
-  const { payload } = await jwtVerify(token, key, { issuer: "itmomegabattle-backend", audience: "telegram-login-state" });
-  if (typeof payload.returnTo !== "string" || typeof payload.nonce !== "string" || typeof payload.codeChallenge !== "string") {
-    throw new Error("Invalid Telegram OIDC state");
-  }
-  return { returnTo: payload.returnTo, nonce: payload.nonce, codeChallenge: payload.codeChallenge };
-}
-
 interface TelegramOidcDiscovery {
   issuer: string;
   authorization_endpoint: string;

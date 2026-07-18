@@ -3,7 +3,7 @@ import { z } from "zod";
 import { env, isItmoIdConfigured, isTelegramOidcConfigured } from "../../config/env.js";
 import { db, rolesFor, unwrap } from "../../lib/db.js";
 import { upsertIdentity } from "../../lib/identity.js";
-import { discoverOidc, discoverTelegramOidc, issueOidcState, issueTelegramOidcState, randomCode, sha256, sha256Base64Url, verifyOidcIdToken, verifyOidcState, verifyTelegramOidcIdToken, verifyTelegramOidcState } from "../../lib/oidc.js";
+import { discoverOidc, discoverTelegramOidc, issueOidcState, randomCode, sha256, verifyOidcIdToken, verifyOidcState, verifyTelegramOidcIdToken } from "../../lib/oidc.js";
 import { issueSession, optionalSession, requireSession } from "../../lib/session.js";
 import { TelegramInitDataError, verifyTelegramInitData, verifyTelegramLoginPayload } from "../../lib/telegram-init-data.js";
 import { requireService } from "../../lib/service-auth.js";
@@ -45,13 +45,11 @@ export async function authRoutes(app: FastifyInstance) {
     }).safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: "Некорректная попытка входа" });
 
-    const siteOrigin = new URL(env.PUBLIC_SITE_URL).origin;
-    const requestedReturn = parsed.data.returnTo ? new URL(parsed.data.returnTo) : null;
-    const returnTo = requestedReturn?.origin === siteOrigin
-      ? requestedReturn.toString()
-      : `${env.PUBLIC_SITE_URL.replace(/\/$/, "")}/ratings`;
-    const nonce = randomCode(20);
-    const state = await issueTelegramOidcState({ returnTo, nonce, codeChallenge: parsed.data.codeChallenge });
+    // Telegram limits `state` much more strictly than a regular OIDC provider.
+    // Keep it opaque and browser-bound on the frontend; PKCE binds the code to
+    // the verifier, while `nonce` binds the signed ID token to this attempt.
+    const state = randomCode(18);
+    const nonce = randomCode(18);
     const discovery = await discoverTelegramOidc();
     const authUrl = new URL(discovery.authorization_endpoint);
     for (const [key, value] of Object.entries({
@@ -64,7 +62,7 @@ export async function authRoutes(app: FastifyInstance) {
       code_challenge: parsed.data.codeChallenge,
       code_challenge_method: "S256",
     })) authUrl.searchParams.set(key, value);
-    return { authorizationUrl: authUrl.toString(), state, expiresAt: new Date(Date.now() + 5 * 60_000).toISOString() };
+    return { authorizationUrl: authUrl.toString(), state, nonce, expiresAt: new Date(Date.now() + 5 * 60_000).toISOString() };
   });
 
   app.get("/auth/telegram/oidc/callback", async (request, reply) => {
@@ -72,33 +70,28 @@ export async function authRoutes(app: FastifyInstance) {
     if (!query.state) {
       return reply.redirect(`${env.PUBLIC_SITE_URL.replace(/\/$/, "")}/ratings#telegram_error=missing_state`);
     }
-    try {
-      const state = await verifyTelegramOidcState(query.state);
-      const redirect = new URL(state.returnTo);
-      if (query.error || !query.code) {
-        redirect.hash = new URLSearchParams({ telegram_error: query.error ?? "missing_code" }).toString();
-      } else {
-        redirect.hash = new URLSearchParams({ telegram_code: query.code, telegram_state: query.state }).toString();
-      }
-      return reply.redirect(redirect.toString());
-    } catch {
+    if (!/^[A-Za-z0-9_-]{20,64}$/.test(query.state)) {
       return reply.redirect(`${env.PUBLIC_SITE_URL.replace(/\/$/, "")}/ratings#telegram_error=invalid_state`);
     }
+    const redirect = new URL(`${env.PUBLIC_SITE_URL.replace(/\/$/, "")}/ratings`);
+    if (query.error || !query.code) {
+      redirect.hash = new URLSearchParams({ telegram_error: query.error ?? "missing_code" }).toString();
+    } else {
+      redirect.hash = new URLSearchParams({ telegram_code: query.code, telegram_state: query.state }).toString();
+    }
+    return reply.redirect(redirect.toString());
   });
 
   app.post("/auth/telegram/oidc/complete", async (request, reply) => {
     if (!isTelegramOidcConfigured) return reply.code(503).send({ error: "Telegram Login пока не настроен в BotFather" });
     const parsed = z.object({
       code: z.string().min(8).max(4096),
-      state: z.string().min(32).max(4096),
+      state: z.string().regex(/^[A-Za-z0-9_-]{20,64}$/),
+      nonce: z.string().regex(/^[A-Za-z0-9_-]{20,64}$/),
       codeVerifier: z.string().regex(/^[A-Za-z0-9_-]{43,128}$/),
     }).safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: "Некорректный ответ Telegram" });
 
-    const state = await verifyTelegramOidcState(parsed.data.state);
-    if (sha256Base64Url(parsed.data.codeVerifier) !== state.codeChallenge) {
-      return reply.code(401).send({ error: "Попытка входа создана в другом браузере" });
-    }
     const discovery = await discoverTelegramOidc();
     const basic = Buffer.from(`${env.TELEGRAM_OIDC_CLIENT_ID}:${env.TELEGRAM_OIDC_CLIENT_SECRET}`).toString("base64");
     const tokenResponse = await fetch(discovery.token_endpoint, {
@@ -116,7 +109,7 @@ export async function authRoutes(app: FastifyInstance) {
     if (!tokenResponse.ok || !tokens.id_token) {
       return reply.code(401).send({ error: tokens.error_description ?? tokens.error ?? "Telegram не подтвердил вход" });
     }
-    const claims = await verifyTelegramOidcIdToken(tokens.id_token, state.nonce, discovery);
+    const claims = await verifyTelegramOidcIdToken(tokens.id_token, parsed.data.nonce, discovery);
     if (typeof claims.sub !== "string") return reply.code(401).send({ error: "Telegram не вернул идентификатор пользователя" });
     const telegramSubject = typeof claims.id === "number" || typeof claims.id === "string"
       ? String(claims.id)

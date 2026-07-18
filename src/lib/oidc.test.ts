@@ -1,19 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { issueTelegramOidcState, sha256Base64Url, verifyTelegramOidcState } from "./oidc.js";
+import { randomCode, sha256Base64Url } from "./oidc.js";
 
-test("binds Telegram OIDC state to the browser PKCE challenge", async () => {
+test("creates Telegram-compatible short opaque state", () => {
+  const state = randomCode(18);
+  assert.match(state, /^[A-Za-z0-9_-]{20,64}$/);
+  assert.ok(state.length < 64);
+});
+
+test("creates an S256 PKCE challenge", () => {
   const verifier = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_";
-  const codeChallenge = sha256Base64Url(verifier);
-  const token = await issueTelegramOidcState({
-    returnTo: "https://example.test/ratings",
-    nonce: "telegram-login-nonce",
-    codeChallenge,
-  });
-
-  const state = await verifyTelegramOidcState(token);
-  assert.equal(state.returnTo, "https://example.test/ratings");
-  assert.equal(state.nonce, "telegram-login-nonce");
-  assert.equal(state.codeChallenge, codeChallenge);
-  assert.notEqual(sha256Base64Url(`${verifier}modified`), state.codeChallenge);
+  const challenge = sha256Base64Url(verifier);
+  assert.match(challenge, /^[A-Za-z0-9_-]{43}$/);
+  assert.notEqual(sha256Base64Url(`${verifier}modified`), challenge);
 });
