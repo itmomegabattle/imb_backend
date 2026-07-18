@@ -7,6 +7,7 @@ import { discoverOidc, discoverTelegramOidc, issueOidcState, randomCode, sha256,
 import { issueSession, optionalSession, requireSession } from "../../lib/session.js";
 import { TelegramInitDataError, verifyTelegramInitData, verifyTelegramLoginPayload } from "../../lib/telegram-init-data.js";
 import { requireService } from "../../lib/service-auth.js";
+import { sendParticipantBotMessage } from "../../lib/telegram-bot.js";
 
 const telegramSchema = z.object({
   initData: z.string().min(1),
@@ -18,11 +19,37 @@ async function sendSession(reply: any, principal: Parameters<typeof issueSession
   reply.setCookie("mb_session", token, {
     httpOnly: true,
     secure: env.NODE_ENV === "production",
-    sameSite: env.NODE_ENV === "production" ? "none" : "lax",
+    sameSite: "lax",
     path: "/",
     maxAge: env.SESSION_TTL_SECONDS,
   });
   return { token, expiresIn: env.SESSION_TTL_SECONDS, profileId: principal.profileId, roles: principal.roles };
+}
+
+async function welcomeFromParticipantBot(app: FastifyInstance, profileId: string, telegramId: string) {
+  const payload = {
+    text: "👋 <b>Привет! Это ITMO Megabattle.</b>\n\nТы вошёл в экосистему через Telegram. Здесь будут уведомления о событиях, наградах и активности.\n\nЗаполни профиль и выбери факультет на сайте.",
+    replyMarkup: {
+      inline_keyboard: [[{ text: "Открыть профиль", url: `${env.PUBLIC_SITE_URL.replace(/\/$/, "")}/ratings` }]],
+    },
+  };
+  const queued = await db().from("notification_queue").insert({
+    profile_id: profileId,
+    bot: "participant",
+    type: "auth.telegram.welcome",
+    payload,
+    idempotency_key: `auth:telegram:welcome:${profileId}`,
+  }).select("id").maybeSingle();
+  if (queued.error?.code === "23505") return;
+  if (queued.error) throw queued.error;
+  if (!queued.data) return;
+  try {
+    await sendParticipantBotMessage(telegramId, payload);
+    await db().from("notification_queue").update({ status: "sent", sent_at: new Date().toISOString(), last_error: null }).eq("id", queued.data.id);
+  } catch (error) {
+    app.log.warn({ err: error, profileId }, "Telegram welcome message was queued for retry");
+    await db().from("notification_queue").update({ status: "pending", last_error: error instanceof Error ? error.message : String(error) }).eq("id", queued.data.id);
+  }
 }
 
 export async function authRoutes(app: FastifyInstance) {
@@ -122,6 +149,7 @@ export async function authRoutes(app: FastifyInstance) {
       avatarUrl: typeof claims.picture === "string" ? claims.picture : undefined,
       metadata: { source: "telegram_oidc", oidcSubject: claims.sub, claims },
     });
+    await welcomeFromParticipantBot(app, identity.profileId, telegramSubject);
     const session = await sendSession(reply, {
       ...identity,
       provider: "telegram",
@@ -231,7 +259,7 @@ export async function authRoutes(app: FastifyInstance) {
   });
 
   app.post("/auth/logout", async (_request, reply) => {
-    reply.clearCookie("mb_session", { path: "/" });
+    reply.clearCookie("mb_session", { path: "/", secure: env.NODE_ENV === "production", sameSite: "lax" });
     return { ok: true };
   });
 }
