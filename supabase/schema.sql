@@ -277,7 +277,7 @@ with check (public.current_profile_is_admin());
 create table if not exists public.project_events (
   id uuid primary key default gen_random_uuid(),
   slug text not null unique,
-  group_key text not null check (group_key in ('megabattle', 'partners')),
+  group_key text not null check (group_key in ('megabattle', 'outings', 'partners')),
   status text not null default 'draft' check (status in ('draft', 'published', 'archived')),
   name text not null,
   type text,
