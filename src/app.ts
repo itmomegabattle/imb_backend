@@ -16,6 +16,7 @@ import { adminRoutes } from "./modules/admin/routes.js";
 import { internalRoutes } from "./modules/internal/routes.js";
 import { itmoEventsRoutes } from "./modules/itmo-events/routes.js";
 import { operationsRoutes } from "./modules/operations/routes.js";
+import { supportRoutes } from "./modules/support/routes.js";
 import { startWorker } from "./services/worker.js";
 import { ZodError } from "zod";
 
@@ -52,6 +53,7 @@ export async function buildApp() {
   await app.register(internalRoutes);
   await app.register(itmoEventsRoutes);
   await app.register(operationsRoutes);
+  await app.register(supportRoutes);
 
   const stopWorker = startWorker(app.log);
   app.addHook("onClose", async () => stopWorker());

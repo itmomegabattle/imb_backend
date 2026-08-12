@@ -638,3 +638,10 @@ create policy "admins delete content images"
 on storage.objects for delete
 to authenticated
 using (bucket_id = 'content-images' and public.current_profile_is_admin());
+create table if not exists public.support_requests (
+  id uuid primary key default gen_random_uuid(), contact text not null, message text not null,
+  attachment_path text, attachment_name text, attachment_mime text,
+  status text not null default 'new' check (status in ('new', 'in_progress', 'resolved')),
+  user_agent text, created_at timestamptz not null default now(), updated_at timestamptz not null default now()
+);
+alter table public.support_requests enable row level security;
