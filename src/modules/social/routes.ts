@@ -16,9 +16,14 @@ export async function socialRoutes(app: FastifyInstance) {
     const code = parsedCode.data;
     const tag = unwrap(await db().from("nfc_tags").select(`id,label,tag_type,is_active,profile_id,scan_count,profiles(${publicProfile})`).or(`code.eq.${code},public_slug.eq.${code}`).maybeSingle());
     if (!tag || !tag.is_active || !tag.profile_id) return reply.code(404).send({ error: "Метка не найдена или ещё не привязана" });
+    const roles = unwrap(await db().from("profile_roles").select("role").eq("profile_id", tag.profile_id));
     unwrap(await db().rpc("increment_nfc_scan", { p_tag_id: tag.id }));
     unwrap(await db().from("profile_views").insert({ viewer_profile_id: request.principal?.profileId ?? null, viewed_profile_id: tag.profile_id, nfc_tag_id: tag.id }));
-    return { tag: { id: tag.id, label: tag.label, type: tag.tag_type }, profile: tag.profiles, canConnect: Boolean(request.principal && request.principal.profileId !== tag.profile_id) };
+    return {
+      tag: { id: tag.id, label: tag.label, type: tag.tag_type },
+      profile: { ...tag.profiles, is_admin: (roles ?? []).some(({ role }) => adminRoles.includes(role)) },
+      canConnect: Boolean(request.principal && request.principal.profileId !== tag.profile_id),
+    };
   });
 
   app.get("/api/v1/nfc", { preHandler: requireSession }, async (request) => {

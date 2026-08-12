@@ -39,8 +39,9 @@ export async function profileRoutes(app: FastifyInstance) {
     const query = db().from("profiles").select(publicFields).is("deleted_at", null).eq(z.string().uuid().safeParse(id).success ? "id" : "nickname", id);
     const data = unwrap(await query.maybeSingle());
     if (!data || data.is_banned) return reply.code(404).send({ error: "Профиль не найден" });
+    const roles = unwrap(await db().from("profile_roles").select("role").eq("profile_id", data.id));
     const { is_banned: _isBanned, ...publicData } = data;
-    return publicData;
+    return { ...publicData, is_admin: (roles ?? []).some(({ role }) => adminRoles.includes(role)) };
   });
 
   app.get("/api/v1/profile", { preHandler: requireSession }, async (request) => {
