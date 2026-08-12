@@ -26,7 +26,7 @@ export async function socialRoutes(app: FastifyInstance) {
     return { tags };
   });
 
-  app.post("/api/v1/nfc/:code/claim", { preHandler: requireOnboardedSession }, async (request, reply) => {
+  app.post("/api/v1/nfc/:code/claim", { preHandler: requireSession }, async (request, reply) => {
     const parsedCode = z.string().regex(/^[A-Za-z0-9_-]{4,128}$/).safeParse((request.params as { code: string }).code);
     if (!parsedCode.success) return reply.code(404).send({ error: "Метка не найдена" });
     const code = parsedCode.data;
