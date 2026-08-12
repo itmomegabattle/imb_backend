@@ -181,7 +181,7 @@ export async function runWorkerOnce(logger?: FastifyBaseLogger) {
     const notifications = await processNotifications();
     const integrations = await processIntegrations();
     const cleanedMedia = await cleanupTemporaryMedia();
-    await db().rpc("trim_audit_logs", { p_keep: 50 });
+    await db().rpc("trim_audit_logs", { p_keep: 10 });
     return { scheduled, notifications, integrations, cleanedMedia };
   } catch (error) {
     logger?.error(error);

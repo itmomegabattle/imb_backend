@@ -9,7 +9,7 @@ const vaultPayload = z.object({ title: z.string().min(2).max(120), login: z.stri
 
 export async function adminRoutes(app: FastifyInstance) {
   app.get("/api/v1/admin/audit", { preHandler: requireRole(...adminRoles) }, async (request) => {
-    const q = z.object({ search: z.string().max(100).optional(), limit: z.coerce.number().int().min(1).max(50).default(10) }).parse(request.query);
+    const q = z.object({ search: z.string().max(100).optional(), limit: z.coerce.number().int().min(1).max(10).default(10) }).parse(request.query);
     let query = db().from("audit_logs").select("*,profiles:actor_profile_id(id,nickname,full_name,avatar_url)").order("created_at", { ascending: false }).limit(q.limit);
     if (q.search) query = query.or(`action.ilike.%${q.search}%,entity_type.ilike.%${q.search}%,entity_id.ilike.%${q.search}%`);
     return { logs: unwrap(await query) };

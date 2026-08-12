@@ -34,5 +34,5 @@ export async function audit(actorProfileId: string | null, action: string, entit
     entity_id: entityId ?? null,
     details,
   }));
-  await db().rpc("trim_audit_logs", { p_keep: 50 });
+  await db().rpc("trim_audit_logs", { p_keep: 10 });
 }

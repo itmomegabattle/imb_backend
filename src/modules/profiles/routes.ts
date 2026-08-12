@@ -3,6 +3,20 @@ import { z } from "zod";
 import { audit, db, unwrap } from "../../lib/db.js";
 import { adminRoles, requireRole, requireSession } from "../../lib/session.js";
 
+const socialLink = z.object({
+  title: z.string().trim().max(30).optional(),
+  label: z.string().trim().max(30).optional(),
+  url: z.string().url(),
+  color: z.string().regex(/^#[0-9a-f]{6}$/i).optional(),
+  style: z.enum(["soft", "solid", "outline", "glass"]).optional(),
+}).refine((value) => Boolean(value.title || value.label), { message: "Укажите название ссылки" })
+  .transform((value) => ({
+    title: value.title || value.label!,
+    url: value.url,
+    color: value.color,
+    style: value.style,
+  }));
+
 const profilePatch = z.object({
   nickname: z.string().trim().min(2).max(40).regex(/^[\p{L}\p{N}_. -]+$/u, "Недопустимые символы в никнейме").optional(),
   full_name: z.string().trim().max(120).nullable().optional(),
@@ -12,7 +26,7 @@ const profilePatch = z.object({
   avatar_url: z.string().url().nullable().optional(),
   telegram_username: z.string().trim().max(64).nullable().optional(),
   instagram_username: z.string().trim().max(64).nullable().optional(),
-  social_links: z.array(z.object({ label: z.string().max(30), url: z.string().url(), color: z.string().regex(/^#[0-9a-f]{6}$/i).optional() })).max(3).optional(),
+  social_links: z.array(socialLink).max(3).optional(),
   birth_date: z.string().date().nullable().optional(),
   onboarding_completed: z.boolean().optional(),
 });
@@ -89,7 +103,12 @@ export async function profileRoutes(app: FastifyInstance) {
   app.delete("/api/v1/admin/profiles/:id", { preHandler: requireRole("admin", "site_admin") }, async (request, reply) => {
     const id = (request.params as { id: string }).id;
     if (id === request.principal!.profileId) return reply.code(409).send({ error: "Нельзя удалить собственный профиль" });
-    unwrap(await db().from("profiles").update({ deleted_at: new Date().toISOString(), is_banned: true, ban_reason: "Удалён администратором" }).eq("id", id));
+    const target = unwrap(await db().from("profiles").select("id").eq("id", id).maybeSingle());
+    if (!target) return reply.code(404).send({ error: "Профиль не найден" });
+    unwrap(await db().rpc("delete_profile_hard", {
+      p_profile_id: id,
+      p_replacement_profile_id: request.principal!.profileId,
+    }));
     await audit(request.principal!.profileId, "profile.deleted", "profile", id);
     return reply.code(204).send();
   });
