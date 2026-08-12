@@ -347,7 +347,7 @@ for each row execute function public.set_updated_at();
 create table if not exists public.team_members (
   id uuid primary key default gen_random_uuid(),
   source_key text,
-  section text not null check (section in ('organizers', 'responsible', 'contributors')),
+  section text not null check (section in ('organizers', 'responsible', 'contributors', 'faculty-ratings')),
   status text not null default 'draft' check (status in ('draft', 'published', 'archived')),
   name text not null,
   activity text,
