@@ -17,6 +17,30 @@ function config(raw: string) {
   return resources[raw as Resource];
 }
 
+function normalizeEventSlug(value: unknown) {
+  return String(value ?? "event")
+    .trim()
+    .toLocaleLowerCase("ru")
+    .replaceAll("ё", "е")
+    .replace(/[^a-zа-я0-9]+/giu, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 72) || "event";
+}
+
+async function ensureUniqueEventSlug(body: Record<string, unknown>, currentId?: string) {
+  const base = normalizeEventSlug(body.slug || body.name);
+  let query = db().from("project_events").select("slug").like("slug", `${base}%`);
+  if (currentId) query = query.neq("id", currentId);
+  const result = await query;
+  if (result.error) throw result.error;
+  const occupied = new Set((result.data ?? []).map(({ slug }) => slug));
+  if (!occupied.has(base)) return base;
+
+  let suffix = 2;
+  while (occupied.has(`${base}-${suffix}`)) suffix += 1;
+  return `${base}-${suffix}`;
+}
+
 export async function contentRoutes(app: FastifyInstance) {
   app.post("/api/v1/stories/submissions", { preHandler: requireSession }, async (request, reply) => {
     const parsed = z.object({ name: z.string().min(2).max(120), faculty: z.string().max(100).nullable().optional(), description: z.string().min(20).max(5000), storyDateLabel: z.string().max(100).nullable().optional(), imageUrl: z.string().url().nullable().optional(), contact: z.string().max(200).nullable().optional() }).safeParse(request.body);
@@ -58,6 +82,7 @@ export async function contentRoutes(app: FastifyInstance) {
     const { resource } = request.params as { resource: string }; const meta = config(resource);
     const body = z.record(z.string(), z.unknown()).parse(request.body);
     delete body.id; delete body.created_at; delete body.updated_at;
+    if (resource === "events") body.slug = await ensureUniqueEventSlug(body);
     const result = await db().from(meta.table).insert(body).select("*").single();
     if (result.error) throw result.error;
     await audit(request.principal!.profileId, "content.created", resource, result.data.id, body);
@@ -68,6 +93,7 @@ export async function contentRoutes(app: FastifyInstance) {
     const { resource, id } = request.params as { resource: string; id: string }; const meta = config(resource);
     const body = z.record(z.string(), z.unknown()).parse(request.body);
     delete body.id; delete body.created_at;
+    if (resource === "events") body.slug = await ensureUniqueEventSlug(body, id);
     const result = await db().from(meta.table).update({ ...body, updated_at: new Date().toISOString() }).eq("id", id).select("*").single();
     if (result.error) throw result.error;
     await audit(request.principal!.profileId, "content.updated", resource, id, { fields: Object.keys(body) });
